@@ -1,0 +1,769 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""awslabs openapi MCP Server implementation."""
+
+import argparse
+import asyncio
+import httpx
+import os
+import re
+import signal
+import sys
+
+# Import from our modules - use direct imports from sub-modules for better patching in tests
+from awslabs.openapi_mcp_server import logger
+from awslabs.openapi_mcp_server.api.config import Config, load_config
+from awslabs.openapi_mcp_server.prompts import MCPPromptManager
+from awslabs.openapi_mcp_server.utils.http_client import HttpClientFactory, make_request_with_retry
+from awslabs.openapi_mcp_server.utils.metrics_provider import metrics
+from awslabs.openapi_mcp_server.utils.openapi import load_openapi_spec
+from awslabs.openapi_mcp_server.utils.openapi_validator import validate_openapi_spec
+from fastmcp import FastMCP
+from fastmcp.server.providers.openapi import MCPType, OpenAPIProvider, RouteMap
+from fastmcp.utilities.openapi import format_description_with_responses
+from typing import Any, Dict
+
+
+_HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'options', 'head', 'trace'}
+
+
+def _build_route_maps(spec: Dict[str, Any]) -> list:
+    """Build route maps for GET operations with query parameters."""
+    mappings = []
+    for path, path_item in spec.get('paths', {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in _HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            if method.lower() == 'get':
+                parameters = operation.get('parameters', [])
+                query_params = [
+                    p for p in parameters if isinstance(p, dict) and p.get('in') == 'query'
+                ]
+                if query_params:
+                    mappings.append(
+                        RouteMap(
+                            methods=['GET'],
+                            pattern=f'^{re.escape(path)}$',
+                            mcp_type=MCPType.TOOL,
+                        )
+                    )
+    return mappings
+
+
+async def create_mcp_server_async(config: Config) -> FastMCP:
+    """Create and configure the FastMCP server.
+
+    Args:
+        config: Server configuration
+
+    Returns:
+        FastMCP: The configured FastMCP server
+
+    """
+    # Log environment information
+    logger.debug('Environment information:')
+    logger.debug(f'Python version: {sys.version}')
+    try:
+        logger.debug(f'HTTPX version: {httpx.__version__}')
+    except AttributeError:
+        logger.debug('HTTPX version: unknown')
+
+    logger.info('Creating FastMCP server')
+
+    server = None
+    try:
+        # Load OpenAPI spec
+        if not config.api_spec_url and not config.api_spec_path:
+            logger.error('No API spec URL or path provided')
+            raise ValueError('Either api_spec_url or api_spec_path must be provided')
+
+        logger.debug(
+            f'Loading OpenAPI spec from URL: {config.api_spec_url} or path: {config.api_spec_path}'
+        )
+
+        # For a URL, load_openapi_spec validates + DNS-pins internally: it
+        # resolves once and fetches by connecting only to that pinned IP, so
+        # there is no un-pinned fetch path for the primary spec either. Pass the
+        # SSRF flags through so the operator's --allow-* opt-ins are honored.
+        openapi_spec = load_openapi_spec(
+            url=config.api_spec_url,
+            path=config.api_spec_path,
+            allow_http=config.allow_insecure_http,
+            allow_private_networks=config.allow_private_networks,
+        )
+
+        # Validate the OpenAPI spec
+        if not validate_openapi_spec(openapi_spec):
+            logger.warning('OpenAPI specification validation failed, but continuing anyway')
+
+        # Create a client for the API
+        if not config.api_base_url:
+            logger.error('No API base URL provided')
+            raise ValueError('API base URL must be provided')
+
+        # Configure authentication using the auth factory
+        from awslabs.openapi_mcp_server.auth import get_auth_provider, is_auth_type_available
+
+        # Import and register the specific auth provider
+        from awslabs.openapi_mcp_server.auth.register import register_provider_by_type
+
+        # Register only the provider we need
+        if config.auth_type and config.auth_type != 'none':
+            logger.debug(f'Registering authentication provider for type: {config.auth_type}')
+            register_provider_by_type(config.auth_type)
+        else:
+            logger.debug('No authentication type specified, using none')
+
+        # Check if the requested auth type is available
+        if config.auth_type != 'none' and not is_auth_type_available(config.auth_type):
+            logger.warning(
+                f'Authentication type {config.auth_type} is not available. Falling back to none.'
+            )
+            config.auth_type = 'none'
+
+        # Get the auth provider
+        auth_provider = get_auth_provider(config)
+
+        # Get authentication components
+        auth_headers = auth_provider.get_auth_headers()
+        # Get auth params (not used directly but may be needed in the future)
+        _ = auth_provider.get_auth_params()
+        auth_cookies = auth_provider.get_auth_cookies()
+        httpx_auth = auth_provider.get_httpx_auth()
+
+        # Helper function to handle authentication configuration errors
+        def handle_auth_error(auth_type, error_message):
+            """Handle authentication configuration errors.
+
+            Args:
+                auth_type: The authentication type
+                error_message: The error message to log
+
+            """
+            logger.error(
+                f'Authentication provider {auth_provider.provider_name} is not properly configured'
+            )
+            logger.error(error_message)
+            logger.error('Server shutting down due to authentication configuration error.')
+            sys.exit(1)
+
+        # Check if the provider is properly configured
+        if not auth_provider.is_configured() and config.auth_type != 'none':
+            if config.auth_type == 'bearer':
+                handle_auth_error(
+                    'bearer',
+                    'Bearer authentication requires a valid token. Please provide a token using --auth-token command line argument or AUTH_TOKEN environment variable.',
+                )
+            elif config.auth_type == 'basic':
+                handle_auth_error(
+                    'basic',
+                    'Basic authentication requires both username and password. Please provide them using --auth-username and --auth-password command line arguments or AUTH_USERNAME and AUTH_PASSWORD environment variables.',
+                )
+            elif config.auth_type == 'api_key':
+                handle_auth_error(
+                    'api_key',
+                    'API Key authentication requires a valid API key. Please provide it using --auth-api-key command line argument or AUTH_API_KEY environment variable.',
+                )
+            elif config.auth_type == 'cognito':
+                handle_auth_error(
+                    'cognito',
+                    'Cognito authentication requires client ID, username, and password. Please provide them using --auth-cognito-client-id, --auth-cognito-username, and --auth-cognito-password command line arguments or corresponding environment variables.',
+                )
+            else:
+                logger.warning(
+                    'Continuing with incomplete authentication configuration. This may cause API requests to fail.'
+                )
+
+        # Log authentication info
+        if config.auth_type != 'none':
+            logger.info(f'Using {auth_provider.provider_name} authentication')
+
+        # Create the HTTP client with authentication and connection pooling
+        client = HttpClientFactory.create_client(
+            base_url=config.api_base_url,
+            headers=auth_headers,
+            auth=httpx_auth,
+            cookies=auth_cookies,
+        )
+        logger.info(f'Created HTTP client for API base URL: {config.api_base_url}')
+
+        custom_mappings = _build_route_maps(openapi_spec)
+
+        # Create the FastMCP server with custom route mappings
+        logger.info('Creating FastMCP server with OpenAPI specification')
+        # Update API name from OpenAPI spec title if available
+        if openapi_spec and isinstance(openapi_spec, dict) and 'info' in openapi_spec:
+            if 'title' in openapi_spec['info'] and openapi_spec['info']['title']:
+                config.api_name = openapi_spec['info']['title']
+                logger.info(f'Updated API name from OpenAPI spec title: {config.api_name}')
+
+        # Parse tag filters
+        include_tags = (
+            {t.strip() for t in config.include_tags.split(',') if t.strip()}
+            if config.include_tags
+            else None
+        )
+        exclude_tags = (
+            {t.strip() for t in config.exclude_tags.split(',') if t.strip()}
+            if config.exclude_tags
+            else None
+        )
+        if include_tags:
+            logger.info(f'Including only operations with tags: {include_tags}')
+        if exclude_tags:
+            logger.info(f'Excluding operations with tags: {exclude_tags}')
+
+        def enrich_component(route: Any, component: Any) -> None:
+            """Enrich MCP tool/resource descriptions with OpenAPI spec details.
+
+            POC migration: this delegates to FastMCP's own shipped formatter
+            (`fastmcp.utilities.openapi.format_description_with_responses`)
+            instead of the previous bespoke string-building. The upstream
+            formatter emits richer, structured sections (Path/Query Parameters,
+            Request Body, Responses with examples) than the old
+            ``desc | Returns: ... | Example: ...`` format.
+            """
+            component.description = format_description_with_responses(
+                component.description or '',
+                route.responses if getattr(route, 'responses', None) else {},
+                getattr(route, 'parameters', None),
+                getattr(route, 'request_body', None),
+            )
+
+        # POC migration: build the primary server via the native high-level
+        # ``FastMCP.from_openapi(...)`` entry point instead of hand-constructing
+        # an ``OpenAPIProvider`` and passing it to ``FastMCP(providers=[...])``.
+        # This is the supported, documented path and the one users migrating off
+        # this wrapper would call directly. Additional specs (below) are still
+        # mounted as extra providers, which ``from_openapi`` does not cover.
+        # ``instructions`` is forwarded through ``from_openapi``'s **settings to
+        # FastMCP(); preserve the wrapper's original text for behavior parity.
+        primary_server = FastMCP.from_openapi(
+            openapi_spec=openapi_spec,
+            client=client,
+            name=config.api_name or 'OpenAPI MCP Server',
+            instructions='This server acts as a bridge between OpenAPI specifications and LLMs, allowing models to have a better understanding of available API capabilities without requiring manual tool definitions.',
+            route_maps=custom_mappings,
+            mcp_component_fn=enrich_component,
+            validate_output=config.validate_output,
+        )
+
+        additional_providers = []
+
+        # Load additional specs for multi-spec composition
+        if config.additional_specs:
+            import json
+            from awslabs.openapi_mcp_server.utils.url_validator import (
+                validate_spec_path,
+                validate_url_for_spec,
+            )
+            from fastmcp.server.auth.ssrf import SSRFError
+
+            allowed_dirs = (
+                [d.strip() for d in config.allowed_spec_dirs.split(os.pathsep) if d.strip()]
+                if config.allowed_spec_dirs
+                else None
+            )
+
+            try:
+                extra_specs = json.loads(config.additional_specs)
+                if not isinstance(extra_specs, list):
+                    logger.warning(
+                        f'additional_specs must be a JSON array, got {type(extra_specs).__name__}'
+                    )
+                    extra_specs = []
+                for entry in extra_specs:
+                    if not isinstance(entry, dict):
+                        logger.warning(f'Skipping non-dict additional spec entry: {entry}')
+                        continue
+                    extra_name = entry.get('name', 'unknown')
+                    extra_base_url = entry.get('base_url', '')
+                    if not extra_base_url:
+                        logger.warning(
+                            f'Skipping additional spec {extra_name}: base_url is required'
+                        )
+                        continue
+
+                    # Validate base_url against SSRF
+                    try:
+                        await validate_url_for_spec(
+                            extra_base_url,
+                            allow_http=config.allow_insecure_http,
+                            allow_private_networks=config.allow_private_networks,
+                        )
+                    except SSRFError as e:
+                        logger.warning(
+                            f'Skipping additional spec {extra_name}: '
+                            f'base_url failed security validation: {e}'
+                        )
+                        continue
+
+                    # Validate spec_url or spec_path
+                    spec_url = entry.get('spec_url', '')
+                    spec_path = entry.get('spec_path', '')
+
+                    # Capture the validated result so the fetch connects to the
+                    # pinned IP(s) — never re-resolving the hostname at fetch time.
+                    spec_validated_url = None
+                    if spec_url:
+                        try:
+                            spec_validated_url = await validate_url_for_spec(
+                                spec_url,
+                                allow_http=config.allow_insecure_http,
+                                allow_private_networks=config.allow_private_networks,
+                            )
+                        except SSRFError as e:
+                            logger.warning(
+                                f'Skipping additional spec {extra_name}: '
+                                f'spec_url failed security validation: {e}'
+                            )
+                            continue
+
+                    if spec_path:
+                        try:
+                            spec_path = validate_spec_path(spec_path, allowed_dirs=allowed_dirs)
+                        except (SSRFError, FileNotFoundError) as e:
+                            logger.warning(
+                                f'Skipping additional spec {extra_name}: '
+                                f'spec_path failed security validation: {e}'
+                            )
+                            continue
+
+                    logger.info(f'Loading additional spec: {extra_name}')
+                    try:
+                        # Load using the pinned IPs from validation (no re-resolution).
+                        extra_spec = load_openapi_spec(
+                            validated_url=spec_validated_url,
+                            path=spec_path,
+                            allow_http=config.allow_insecure_http,
+                            allow_private_networks=config.allow_private_networks,
+                        )
+                    except Exception as e:
+                        logger.warning(f'Failed to load additional spec {extra_name}: {e}')
+                        continue
+
+                    if not validate_openapi_spec(extra_spec):
+                        logger.warning(
+                            f'Additional spec {extra_name} validation failed, continuing anyway'
+                        )
+
+                    # Build per-entry auth — never inherit primary API credentials
+                    extra_headers = {}
+                    extra_auth = None
+                    extra_cookies = None
+
+                    entry_auth_type = entry.get('auth_type', 'none')
+                    if entry_auth_type == 'bearer':
+                        token = entry.get('auth_token', '')
+                        if token:
+                            extra_headers['Authorization'] = f'Bearer {token}'
+                    elif entry_auth_type == 'api_key':
+                        key = entry.get('auth_api_key', '')
+                        key_name = entry.get('auth_api_key_name', 'X-API-Key')
+                        key_in = entry.get('auth_api_key_in', 'header')
+                        if key and key_in == 'header':
+                            extra_headers[key_name] = key
+                        elif key and key_in == 'cookie':
+                            extra_cookies = {key_name: key}
+                        elif key and key_in == 'query':
+                            logger.warning(
+                                f'Additional spec {extra_name}: auth_api_key_in=query is not '
+                                f'supported for additional specs (use header or cookie). '
+                                f'The API key will NOT be sent.'
+                            )
+                    elif entry_auth_type == 'basic':
+                        username = entry.get('auth_username', '')
+                        password = entry.get('auth_password', '')
+                        if username and password:
+                            extra_auth = httpx.BasicAuth(username, password)
+                    elif entry_auth_type != 'none':
+                        logger.warning(
+                            f'Additional spec {extra_name}: unrecognized auth_type '
+                            f'"{entry_auth_type}", requests will be unauthenticated'
+                        )
+
+                    extra_client = HttpClientFactory.create_client(
+                        base_url=extra_base_url,
+                        headers=extra_headers if extra_headers else None,
+                        auth=extra_auth,
+                        cookies=extra_cookies,
+                        follow_redirects=False,
+                    )
+                    additional_providers.append(
+                        OpenAPIProvider(
+                            openapi_spec=extra_spec,
+                            client=extra_client,
+                            route_maps=_build_route_maps(extra_spec),
+                            mcp_component_fn=enrich_component,
+                            validate_output=config.validate_output,
+                        )
+                    )
+                    logger.info(f'Added additional spec: {extra_name}')
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f'Failed to parse additional specs: {e}')
+
+        # The primary server comes from ``from_openapi``; compose any additional
+        # specs onto it as extra providers via the public API.
+        server = primary_server
+        for extra_provider in additional_providers:
+            server.add_provider(extra_provider)
+
+        # Apply tag filters after server creation
+        if include_tags:
+            server.enable(tags=include_tags, only=True)
+        if exclude_tags:
+            server.disable(tags=exclude_tags)
+
+        logger.info(f'Successfully configured API: {config.api_name}')
+
+        # Generate MCP-compliant prompts
+        try:
+            logger.info(f'Generating MCP prompts for API: {config.api_name}')
+            # Create prompt manager
+            prompt_manager = MCPPromptManager()
+
+            # Generate prompts
+            await prompt_manager.generate_prompts(server, config.api_name, openapi_spec)
+
+            # Register resource handler
+            prompt_manager.register_api_resource_handler(server, config.api_name, client)
+
+        except Exception as e:
+            logger.warning(f'Failed to generate operation-specific prompts: {e}')
+            import traceback
+
+            logger.warning(f'Traceback: {traceback.format_exc()}')
+
+        # Register health check tool
+        async def health_check() -> Dict[str, Any]:
+            """Check the health of the server and API.
+
+            Returns:
+                Dict[str, Any]: Health check results
+
+            """
+            api_health = True
+            api_message = 'API is reachable'
+
+            # Try to make a simple request to the API
+            try:
+                # Use the retry-enabled request function
+                response = await make_request_with_retry(
+                    client=client, method='GET', url='/', max_retries=2, retry_delay=0.5
+                )
+                status_code = response.status_code
+                if status_code >= 400:
+                    api_health = False
+                    api_message = f'API returned status code {status_code}'
+            except Exception as e:
+                api_health = False
+                api_message = f'Error connecting to API: {str(e)}'
+
+            # Get metrics summary
+            summary = metrics.get_summary()
+
+            return {
+                'server': {
+                    'status': 'healthy',
+                    'version': config.version,
+                    'uptime': 'N/A',  # Would require tracking start time
+                },
+                'api': {
+                    'name': config.api_name,
+                    'status': 'healthy' if api_health else 'unhealthy',
+                    'message': api_message,
+                    'base_url': config.api_base_url,
+                },
+                'metrics': summary,
+            }
+
+    except Exception as e:
+        logger.error(f'Error setting up API: {e}')
+        logger.error('Server shutting down due to API setup error.')
+        import traceback
+
+        logger.error(f'Traceback: {traceback.format_exc()}')
+        sys.exit(1)
+
+    # Move the logging here, after the server is fully initialized
+    # Get the actual tools from the server's internal structure
+    tool_count = 0
+    tool_names = []
+
+    # Try different ways to access tools based on FastMCP implementation
+    if hasattr(server, 'list_tools'):
+        try:
+            tools = await server.list_tools()
+            tool_count = len(tools)
+            tool_names = [getattr(t, 'name', 'unknown') for t in tools]
+            logger.debug(f'Found {tool_count} tools via list_tools()')
+            for i, tool in enumerate(tools):
+                logger.debug(
+                    f'Tool {i}: {getattr(tool, "name", "unknown")} - {getattr(tool, "description", "no description")}'
+                )
+        except Exception as e:
+            logger.warning(f'Failed to list tools: {e}')
+
+    # Log the prompt count
+    prompt_count = 0
+    prompt_names = []
+    if hasattr(server, 'list_prompts'):
+        try:
+            prompts = await server.list_prompts()
+            prompt_count = len(prompts)
+            prompt_names = [getattr(p, 'name', 'unknown') for p in prompts]
+        except Exception as e:
+            logger.warning(f'Failed to list prompts: {e}')
+
+    # Log details of registered components
+    if tool_count > 0:
+        logger.info(f'Registered tools: {tool_names}')
+
+    if prompt_count > 0:
+        logger.info(f'Registered prompts: {prompt_names}')
+
+    return server
+
+
+def create_mcp_server(config: Config) -> FastMCP:
+    """Create and configure the FastMCP server (synchronous wrapper).
+
+    This is a synchronous convenience wrapper that calls
+    :func:`create_mcp_server_async` using ``asyncio.run``.
+    For asynchronous contexts, use :func:`create_mcp_server_async`
+    directly instead of this function.
+
+    Args:
+        config: Server configuration.
+
+    Returns:
+        FastMCP: The configured FastMCP server.
+
+    """
+    return asyncio.run(create_mcp_server_async(config))
+
+
+async def get_all_counts(server: FastMCP) -> tuple[int, int, int, int]:
+    """Get counts of prompts, tools, resources, and resource templates."""
+    prompts = await server.list_prompts()
+    tools = await server.list_tools()
+    resources = await server.list_resources()
+
+    # Get resource templates if available
+    resource_templates = []
+    if hasattr(server, 'list_resource_templates'):
+        try:
+            resource_templates = await server.list_resource_templates()
+        except AttributeError as e:
+            # This is expected if the method exists but is not implemented
+            logger.debug(f'list_resource_templates exists but not implemented: {e}')
+        except Exception as e:
+            # Log other unexpected errors
+            logger.warning(f'Error retrieving resource templates: {e}')
+
+    return len(prompts), len(tools), len(resources), len(resource_templates)
+
+
+def setup_signal_handlers():
+    """Set up signal handlers for graceful shutdown."""
+    # Store original SIGINT handler
+    original_sigint = signal.getsignal(signal.SIGINT)
+
+    def signal_handler(sig, frame):
+        """Handle signals by logging metrics then chain to original handler."""
+        logger.debug(f'Received signal {sig}, shutting down gracefully...')
+
+        # Log final metrics
+        summary = metrics.get_summary()
+        logger.info(f'Final metrics: {summary}')
+
+        # if sig is signal.SIGINT handle gracefully
+        if sig == signal.SIGINT:
+            logger.info('Process Interrupted, Shutting down gracefully...')
+            sys.exit(0)
+
+        # For SIGINT, chain to the original handler
+        if (
+            sig == signal.SIGINT
+            and original_sigint != signal.SIG_DFL
+            and original_sigint != signal.SIG_IGN
+        ):
+            # Call the original handler
+            if callable(original_sigint):
+                original_sigint(sig, frame)
+
+        # For other signals or if no original handler, just return
+        # This lets the default handling take over
+
+    # Register for SIGTERM only
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # For SIGINT, we'll use a special handler that logs then chains to original
+    signal.signal(signal.SIGINT, signal_handler)
+
+
+def main():
+    """Run the MCP server with CLI argument support."""
+    parser = argparse.ArgumentParser(
+        description='This project is a server that dynamically creates Model Context Protocol (MCP) tools and resources from OpenAPI specifications. It allows Large Language Models (LLMs) to interact with APIs through the Model Context Protocol.'
+    )
+    # Server configuration
+    parser.add_argument(
+        '--log-level',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        default='INFO',
+        help='Set logging level',
+    )
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+
+    # API configuration
+    parser.add_argument('--api-name', help='Name of the API (default: petstore)')
+    parser.add_argument('--api-url', help='Base URL of the API')
+    parser.add_argument('--spec-url', help='URL of the OpenAPI specification')
+    parser.add_argument('--spec-path', help='Local path to the OpenAPI specification file')
+
+    # Authentication configuration
+    parser.add_argument(
+        '--auth-type',
+        choices=['none', 'basic', 'bearer', 'api_key', 'cognito'],
+        help='Authentication type to use (default: none)',
+    )
+
+    # Basic auth
+    parser.add_argument('--auth-username', help='Username for basic authentication')
+    parser.add_argument('--auth-password', help='Password for basic authentication')
+
+    # Bearer auth
+    parser.add_argument('--auth-token', help='Token for bearer authentication')
+
+    # API key auth
+    parser.add_argument('--auth-api-key', help='API key for API key authentication')
+    parser.add_argument('--auth-api-key-name', help='Name of the API key (default: api_key)')
+    parser.add_argument(
+        '--auth-api-key-in',
+        choices=['header', 'query', 'cookie'],
+        help='Where to place the API key (default: header)',
+    )
+
+    # Cognito auth
+    parser.add_argument('--auth-cognito-client-id', help='Client ID for Cognito authentication')
+    parser.add_argument('--auth-cognito-username', help='Username for Cognito authentication')
+    parser.add_argument('--auth-cognito-password', help='Password for Cognito authentication')
+    parser.add_argument(
+        '--auth-cognito-user-pool-id', help='User Pool ID for Cognito authentication'
+    )
+    parser.add_argument('--auth-cognito-region', help='AWS region for Cognito (default: us-east-1)')
+    parser.add_argument(
+        '--auth-cognito-client-secret',
+        help='Client secret for Cognito OAuth 2.0 client credentials flow',
+    )
+    parser.add_argument(
+        '--auth-cognito-domain', help='Domain prefix for Cognito OAuth 2.0 client credentials flow'
+    )
+    parser.add_argument(
+        '--auth-cognito-scopes',
+        help='Comma-separated list of scopes for Cognito OAuth 2.0 client credentials flow',
+    )
+
+    # Tag filtering
+    parser.add_argument(
+        '--include-tags',
+        help='Comma-separated list of OpenAPI tags to include (only expose matching operations)',
+    )
+    parser.add_argument(
+        '--exclude-tags',
+        help='Comma-separated list of OpenAPI tags to exclude (hide matching operations)',
+    )
+
+    # Output validation
+    parser.add_argument(
+        '--no-validate-output',
+        action='store_true',
+        help='Disable validation of API responses against OpenAPI response schemas',
+    )
+
+    # Multi-spec composition
+    parser.add_argument(
+        '--additional-specs',
+        help='JSON array of additional API specs. Each entry requires base_url and either spec_url or spec_path: [{"name":"...","spec_url":"...","base_url":"..."}]',
+    )
+
+    # Security settings
+    parser.add_argument(
+        '--allow-insecure-http',
+        action='store_true',
+        help='Allow http:// URLs for spec and base URLs (default: HTTPS only)',
+    )
+    parser.add_argument(
+        '--allow-private-networks',
+        action='store_true',
+        help='Allow private/loopback/link-local IP addresses for spec and base URLs',
+    )
+    parser.add_argument(
+        '--allowed-spec-dirs',
+        help='OS path-separated list of directories allowed for spec_path (colon on Unix, semicolon on Windows)',
+    )
+
+    args = parser.parse_args()
+
+    # Set up logging with loguru at specified level
+    logger.remove()
+    logger.add(lambda msg: print(msg, end='', file=sys.stderr), level=args.log_level)
+    logger.info(f'Starting server with logging level: {args.log_level}')
+
+    # Load configuration
+    logger.debug('Loading configuration from arguments and environment')
+    config = load_config(args)
+    logger.debug(f'Configuration loaded: api_name={config.api_name}, transport={config.transport}')
+
+    # Create and run the MCP server
+    logger.info('Creating MCP server')
+    mcp_server = create_mcp_server(config)
+
+    # Set up signal handlers
+    setup_signal_handlers()
+
+    try:
+        # Get counts of prompts, tools, resources, and resource templates
+        prompt_count, tool_count, resource_count, resource_template_count = asyncio.run(
+            get_all_counts(mcp_server)
+        )
+
+        # Log all counts in a single statement
+        logger.info(
+            f'Server components: {prompt_count} prompts, {tool_count} tools, {resource_count} resources, {resource_template_count} resource templates'
+        )
+
+        # Check if we have at least one tool or resource
+        if tool_count == 0 and resource_count == 0:
+            logger.warning(
+                'No tools or resources were registered. This might indicate an issue with the API specification or authentication.'
+            )
+    except Exception as e:
+        logger.error(f'Error counting tools and resources: {e}')
+        logger.error('Server shutting down due to error in tool/resource registration.')
+        import traceback
+
+        logger.error(f'Traceback: {traceback.format_exc()}')
+        sys.exit(1)
+
+    # Run server with stdio transport only
+    logger.info('Running server with stdio transport')
+    mcp_server.run()
+
+
+if __name__ == '__main__':
+    main()

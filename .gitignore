@@ -1,23 +1,92 @@
+# Environments and secrets
 .env
 .env.*
+.env.local
+.env.*.local
 !.env.example
-.DS_Store
-Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv
+.venv/
+env/
+venv/
+ENV/
+test-env/
+.test-env/
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+
+# Testing & Coverage
+.tox/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.pytest_cache/
+
+# Ruff
+.ruff_cache/
+
+# Build
+*.manifest
+*.spec
+.pybuilder/
+target/
+node_modules/
+vendor/
+
+# PyPI
+.pypirc
+
+# Project specific files
+# Functional test logs
+petstore_test_*.log
+server_output.tmp
+server_log.txt
+server_pid.txt
 *.tmp
 *.log
+test-docker*.sh
+
+# mkdocs
+site/
+
+# Temp files & cache
 .cache/
 tmp/*
 !tmp/.gitkeep
-coverage/
-dist/
-build/
-node_modules/
-vendor/
-.venv/
-venv/
-__pycache__/
-*.py[cod]
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# Playwright
+.playwright-mcp/

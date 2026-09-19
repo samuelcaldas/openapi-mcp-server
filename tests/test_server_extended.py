@@ -1,0 +1,129 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Extended tests for the server module."""
+
+import pytest
+from awslabs.openapi_mcp_server.api.config import Config
+from awslabs.openapi_mcp_server.server import create_mcp_server, setup_signal_handlers
+from unittest.mock import MagicMock, call, patch
+
+
+@pytest.fixture
+def mock_config():
+    """Create a mock configuration for testing."""
+    config = MagicMock(spec=Config)
+    config.api_name = 'test-api'
+    config.api_spec_url = 'https://example.com/openapi.json'
+    config.api_spec_path = None
+    config.api_base_url = 'https://example.com/api'
+    config.auth_type = 'none'
+    config.auth_username = None
+    config.auth_password = None
+    config.auth_token = None
+    config.auth_api_key = None
+    config.auth_api_key_name = 'api_key'
+    config.auth_api_key_in = 'header'
+    config.version = '1.0.0'
+    config.transport = 'stdio'
+    return config
+
+
+# NOTE: ``test_create_mcp_server_with_query_params_routes`` was removed in the
+# FastMCP-native migration. Its only assertion inspected
+# ``OpenAPIProvider.call_args[1]`` for a ``route_maps`` kwarg — a low-level
+# construction detail now passed through to ``FastMCP.from_openapi``.
+# ``_build_route_maps`` is unit-tested directly in ``tests/test_new_features.py``
+# (``test_build_route_maps_*``). Note that its *forwarding* into the provider is
+# not asserted on either branch: FastMCP's ``DEFAULT_ROUTE_MAPPINGS`` already
+# maps every operation to a TOOL, so a GET-with-query-params → TOOL test passes
+# whether or not the builder's output actually reaches the provider.
+
+
+@patch('awslabs.openapi_mcp_server.server.FastMCP')
+@patch('awslabs.openapi_mcp_server.server.load_openapi_spec')
+@patch('awslabs.openapi_mcp_server.server.validate_openapi_spec', return_value=True)
+@patch('awslabs.openapi_mcp_server.server.HttpClientFactory.create_client')
+def test_create_mcp_server_with_prompt_generation(
+    mock_create_client,
+    mock_validate,
+    mock_load_spec,
+    mock_fastmcp,
+    mock_config,
+):
+    """Test creating an MCP server with prompt generation."""
+    # Setup mocks
+    mock_server = MagicMock()
+    mock_server.add_prompt = MagicMock()
+    mock_fastmcp.from_openapi.return_value = mock_server
+
+    mock_load_spec.return_value = {
+        'openapi': '3.0.0',
+        'info': {'title': 'Test API', 'version': '1.0.0'},
+        'paths': {'/pets': {'get': {'operationId': 'listPets', 'summary': 'List all pets'}}},
+    }
+
+    mock_client = MagicMock()
+    mock_create_client.return_value = mock_client
+
+    # Call the function
+    result = create_mcp_server(mock_config)
+
+    # Verify the result
+    assert result == mock_server
+
+
+@patch('awslabs.openapi_mcp_server.server.signal')
+@patch('awslabs.openapi_mcp_server.server.logger')
+@patch('awslabs.openapi_mcp_server.server.metrics')
+@patch('awslabs.openapi_mcp_server.server.sys.exit')
+def test_setup_signal_handlers(mock_exit, mock_metrics, mock_logger, mock_signal):
+    """Test setting up signal handlers."""
+    # Setup mocks
+    mock_metrics.get_summary.return_value = {'api_calls': 10, 'errors': 2}
+    mock_original_handler = MagicMock()
+    mock_signal.getsignal.return_value = mock_original_handler
+
+    # Call the function
+    setup_signal_handlers()
+
+    # Verify that signal handlers were registered
+    mock_signal.getsignal.assert_called_once_with(mock_signal.SIGINT)
+    mock_signal.signal.assert_has_calls(
+        [
+            call(mock_signal.SIGTERM, mock_signal.signal.call_args[0][1]),
+            call(mock_signal.SIGINT, mock_signal.signal.call_args[0][1]),
+        ]
+    )
+
+    # Get the signal handler function
+    signal_handler = mock_signal.signal.call_args[0][1]
+
+    # Call the signal handler with SIGTERM
+    signal_handler(mock_signal.SIGTERM, None)
+
+    # Verify that metrics were logged
+    mock_metrics.get_summary.assert_called_once()
+    mock_logger.info.assert_any_call("Final metrics: {'api_calls': 10, 'errors': 2}")
+
+    # Reset mocks
+    mock_metrics.reset_mock()
+    mock_logger.reset_mock()
+
+    # Call the signal handler with SIGINT
+    signal_handler(mock_signal.SIGINT, None)
+
+    # Verify that metrics were logged
+    mock_metrics.get_summary.assert_called_once()
+    mock_logger.info.assert_any_call('Process Interrupted, Shutting down gracefully...')
+    mock_exit.assert_called_once_with(0)
