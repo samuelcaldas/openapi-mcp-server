@@ -1,6 +1,6 @@
 """Tests to boost coverage for error_handler.py."""
 
-import httpx
+import httpx2
 import pytest
 from awslabs.openapi_mcp_server.utils.error_handler import (
     APIError,
@@ -48,19 +48,19 @@ class TestErrorHandlerBoost:
 
     @patch('awslabs.openapi_mcp_server.utils.error_handler.logger')
     def test_api_error_with_httpx_error(self, mock_logger):
-        """Test APIError with httpx error."""
-        # Create a mock httpx.HTTPStatusError
+        """Test APIError with httpx2 error."""
+        # Create a mock httpx2.HTTPStatusError
         response = MagicMock()
         response.status_code = 404
         response.text = 'Not Found'
 
-        http_error = httpx.HTTPStatusError(
+        http_error = httpx2.HTTPStatusError(
             'Not Found',
             request=MagicMock(),
             response=response,
         )
 
-        # Create APIError from httpx error
+        # Create APIError from httpx2 error
         error = APIError(
             status_code=404,
             message='API endpoint not found',

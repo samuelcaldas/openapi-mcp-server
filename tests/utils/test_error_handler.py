@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for the error handler utility."""
 
-import httpx
+import httpx2
 import json
 import pytest
 from awslabs.openapi_mcp_server.utils.error_handler import (
@@ -87,7 +87,7 @@ class TestHandleHttpError:
 
         # Create a real HTTPStatusError
         mock_request = MagicMock()
-        error = httpx.HTTPStatusError(
+        error = httpx2.HTTPStatusError(
             '401 Unauthorized', request=mock_request, response=mock_response
         )
 
@@ -110,7 +110,9 @@ class TestHandleHttpError:
 
         # Create a real HTTPStatusError
         mock_request = MagicMock()
-        error = httpx.HTTPStatusError('404 Not Found', request=mock_request, response=mock_response)
+        error = httpx2.HTTPStatusError(
+            '404 Not Found', request=mock_request, response=mock_response
+        )
 
         result = handle_http_error(error)
 
@@ -125,16 +127,16 @@ class TestHandleRequestError:
     def test_handle_connect_timeout(self):
         """Test handling of connect timeout error."""
         # Create a mock error
-        error = httpx.ConnectTimeout('Connection timed out')
+        error = httpx2.ConnectTimeout('Connection timed out')
 
         # Fix the ERROR_CLASSES issue by patching it
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: APIError,
-                httpx.ReadTimeout: APIError,
-                httpx.ConnectError: APIError,
-                httpx.RequestError: APIError,
+                httpx2.ConnectTimeout: APIError,
+                httpx2.ReadTimeout: APIError,
+                httpx2.ConnectError: APIError,
+                httpx2.RequestError: APIError,
             },
         ):
             # Handle the error

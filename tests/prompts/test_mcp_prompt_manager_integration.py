@@ -15,7 +15,6 @@
 
 import pytest
 from awslabs.openapi_mcp_server.prompts import MCPPromptManager
-from fastmcp.server.providers.openapi import MCPType
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -31,19 +30,12 @@ def mock_server():
     # Mock register_resource_handler
     server.register_resource_handler = MagicMock()
 
-    # Mock _openapi_router for operation type determination
-    mock_route = MagicMock()
-    mock_route.path = '/pet/{petId}'
-    mock_route.method = 'GET'
-    mock_route.mcp_type = MCPType.RESOURCE
-
-    mock_route2 = MagicMock()
-    mock_route2.path = '/pet/findByStatus'
-    mock_route2.method = 'GET'
-    mock_route2.mcp_type = MCPType.TOOL
-
-    server._openapi_router = MagicMock()
-    server._openapi_router._routes = [mock_route, mock_route2]
+    server.route_classifications = {
+        ('/pet/{petId}', 'GET'): 'resource_template',
+        ('/pet/findByStatus', 'GET'): 'tool',
+        ('/pet', 'GET'): 'resource',
+        ('/pet', 'POST'): 'tool',
+    }
 
     return server
 
@@ -186,7 +178,12 @@ async def test_generate_prompts_integration(mock_server, petstore_openapi_spec):
     prompt_manager = MCPPromptManager()
 
     # Generate prompts
-    result = await prompt_manager.generate_prompts(mock_server, 'petstore', petstore_openapi_spec)
+    result = await prompt_manager.generate_prompts(
+        mock_server,
+        'petstore',
+        petstore_openapi_spec,
+        route_classifications=mock_server.route_classifications,
+    )
 
     # Check that prompts were registered
     assert mock_server.add_prompt.call_count >= 3  # At least 3 operations
@@ -197,6 +194,106 @@ async def test_generate_prompts_integration(mock_server, petstore_openapi_spec):
     # Check that workflow prompts were generated
     # We should have at least one workflow (list-get-update)
     assert result['workflow_prompts_generated'] is True
+
+
+@pytest.mark.asyncio
+async def test_public_component_callback_classifies_routes_for_prompts():
+    """Capture FastMCP's post-mapping component classes for primary-spec prompts."""
+    import httpx2
+    from awslabs.openapi_mcp_server.server import (
+        _build_route_maps,
+        _create_component_callback,
+    )
+    from fastmcp import FastMCP
+
+    spec = {
+        'openapi': '3.0.0',
+        'info': {'title': 'Classification API', 'version': '1.0.0'},
+        'paths': {
+            '/pets': {
+                'get': {
+                    'operationId': 'listPets',
+                    'responses': {'200': {'description': 'OK'}},
+                }
+            },
+            '/pets/{petId}': {
+                'get': {
+                    'operationId': 'getPet',
+                    'parameters': [
+                        {
+                            'name': 'petId',
+                            'in': 'path',
+                            'required': True,
+                            'schema': {'type': 'integer'},
+                        }
+                    ],
+                    'responses': {'200': {'description': 'OK'}},
+                }
+            },
+            '/pets/search': {
+                'get': {
+                    'operationId': 'searchPets',
+                    'parameters': [{'$ref': '#/components/parameters/Status'}],
+                    'responses': {'200': {'description': 'OK'}},
+                }
+            },
+        },
+        'components': {
+            'parameters': {
+                'Status': {
+                    'name': 'status',
+                    'in': 'query',
+                    'required': True,
+                    'schema': {'type': 'string'},
+                }
+            }
+        },
+    }
+    route_classifications = {}
+    route_resource_uris = {}
+    client = httpx2.AsyncClient(base_url='https://api.example.com')
+
+    try:
+        server = FastMCP.from_openapi(
+            spec,
+            client=client,
+            name='Classification API',
+            route_maps=_build_route_maps(spec),
+            mcp_component_fn=_create_component_callback(route_classifications, route_resource_uris),
+        )
+        await MCPPromptManager().generate_prompts(
+            server,
+            'primary',
+            spec,
+            route_classifications=route_classifications,
+            resource_uris=route_resource_uris,
+        )
+
+        assert route_classifications == {
+            ('/pets', 'GET'): 'resource',
+            ('/pets/{petId}', 'GET'): 'resource_template',
+            ('/pets/search', 'GET'): 'tool',
+        }
+        prompts = {prompt.name: prompt for prompt in await server.list_prompts()}
+        resources = {resource.name: resource for resource in await server.list_resources()}
+        templates = {template.name: template for template in await server.list_resource_templates()}
+        list_messages = prompts['listPets'].fn()
+        pet_messages = prompts['getPet'].fn(7)
+        assert len(list_messages) == 2
+        assert len(pet_messages) == 2
+        assert len(prompts['searchPets'].fn('available')) == 1
+        assert str(list_messages[1].content.resource.uri) == str(
+            route_resource_uris[('/pets', 'GET')]
+        )
+        assert str(pet_messages[1].content.resource.uri) == str(
+            route_resource_uris[('/pets/{petId}', 'GET')]
+        )
+        assert str(resources['listPets'].uri) == str(route_resource_uris[('/pets', 'GET')])
+        assert str(templates['getPet'].uri_template) == str(
+            route_resource_uris[('/pets/{petId}', 'GET')]
+        )
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -236,7 +333,12 @@ async def test_full_integration(mock_server, mock_client, petstore_openapi_spec)
     prompt_manager = MCPPromptManager()
 
     # Generate prompts
-    result = await prompt_manager.generate_prompts(mock_server, 'petstore', petstore_openapi_spec)
+    result = await prompt_manager.generate_prompts(
+        mock_server,
+        'petstore',
+        petstore_openapi_spec,
+        route_classifications=mock_server.route_classifications,
+    )
 
     # Register the resource handler
     prompt_manager.register_api_resource_handler(mock_server, 'petstore', mock_client)

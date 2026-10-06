@@ -14,7 +14,7 @@
 """Base authentication provider interface."""
 
 import abc
-import httpx
+import httpx2
 from typing import Any, Dict, Optional
 
 
@@ -57,11 +57,11 @@ class AuthProvider(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_httpx_auth(self) -> Optional[httpx.Auth]:
+    def get_httpx_auth(self) -> Optional[httpx2.Auth]:
         """Get authentication object for HTTPX.
 
         Returns:
-            Optional[httpx.Auth]: Authentication object for HTTPX client or None
+            Optional[httpx2.Auth]: Authentication object for HTTPX client or None
 
         """
         pass
@@ -131,11 +131,11 @@ class NullAuthProvider(AuthProvider):
         """
         return {}
 
-    def get_httpx_auth(self) -> Optional[httpx.Auth]:
+    def get_httpx_auth(self) -> Optional[httpx2.Auth]:
         """Get authentication object for HTTPX.
 
         Returns:
-            Optional[httpx.Auth]: None as no authentication is provided
+            Optional[httpx2.Auth]: None as no authentication is provided
 
         """
         return None

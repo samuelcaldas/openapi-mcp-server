@@ -47,7 +47,12 @@ async def test_generate_prompts_invalid_http_method():
         mock_create.return_value = True
 
         manager = MCPPromptManager()
-        await manager.generate_prompts(mock_server, api_name, openapi_spec)
+        await manager.generate_prompts(
+            mock_server,
+            api_name,
+            openapi_spec,
+            route_classifications={('/test', 'GET'): 'resource', ('/test', 'POST'): 'tool'},
+        )
 
         # Should only be called once for the valid 'get' method, not for 'trace'
         assert mock_create.call_count == 1
@@ -87,7 +92,12 @@ async def test_generate_prompts_missing_operation_id():
         mock_create.return_value = True
 
         manager = MCPPromptManager()
-        await manager.generate_prompts(mock_server, api_name, openapi_spec)
+        await manager.generate_prompts(
+            mock_server,
+            api_name,
+            openapi_spec,
+            route_classifications={('/test', 'GET'): 'resource', ('/test', 'POST'): 'tool'},
+        )
 
         # Should only be called once for the operation with operationId
         assert mock_create.call_count == 1

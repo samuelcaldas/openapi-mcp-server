@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for the auth protocol module."""
 
-import httpx
+import httpx2
 import unittest
 from awslabs.openapi_mcp_server.api.config import Config
 from awslabs.openapi_mcp_server.auth.auth_protocol import (
@@ -50,7 +50,7 @@ class MockAuthProvider:
         """Get authentication cookies for HTTP requests."""
         return {'session': 'mock-session-id'}
 
-    def get_httpx_auth(self) -> httpx.Auth:
+    def get_httpx_auth(self) -> httpx2.Auth:
         """Get authentication object for HTTPX."""
         return None
 

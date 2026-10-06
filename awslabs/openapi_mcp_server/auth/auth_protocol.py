@@ -13,7 +13,7 @@
 # limitations under the License.
 """Authentication provider protocols and type definitions."""
 
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server.api.config import Config
 from typing import Dict, Optional, Protocol, TypeVar, runtime_checkable
 
@@ -46,7 +46,7 @@ class AuthProviderProtocol(Protocol):
         """Get authentication cookies for HTTP requests."""
         ...
 
-    def get_httpx_auth(self) -> Optional[httpx.Auth]:
+    def get_httpx_auth(self) -> Optional[httpx2.Auth]:
         """Get authentication object for HTTPX."""
         ...
 

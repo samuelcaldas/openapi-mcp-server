@@ -14,7 +14,7 @@
 """Utilities for working with OpenAPI specifications."""
 
 import asyncio
-import httpx
+import httpx2
 import json
 import tempfile
 import time
@@ -215,7 +215,7 @@ def _pinned_fetch(
     Raises:
         SSRFError: If the scheme is disallowed.
         SSRFFetchError: On redirect, oversized body, or exhausted pinned IPs.
-        httpx.HTTPError: On transient network/HTTP errors (retryable upstream).
+        httpx2.HTTPError: On transient network/HTTP errors (retryable upstream).
 
     """
     scheme = urlparse(validated_url.original_url).scheme or 'https'
@@ -240,8 +240,8 @@ def _pinned_fetch(
             f'Fetching spec {validated_url.original_url} pinned to {pinned_ip} ({pinned_url})'
         )
         try:
-            with httpx.Client(
-                timeout=httpx.Timeout(timeout),
+            with httpx2.Client(
+                timeout=httpx2.Timeout(timeout),
                 follow_redirects=False,
                 verify=True,
             ) as client:
@@ -281,7 +281,7 @@ def _pinned_fetch(
                             raise SSRFFetchError(f'Spec too large: exceeded {max_size} bytes')
                         chunks.append(chunk)
                     return b''.join(chunks)
-        except (httpx.TimeoutException, httpx.TransportError) as e:
+        except (httpx2.TimeoutException, httpx2.TransportError) as e:
             # Transient / per-IP connection error: try the next pinned IP.
             last_error = e
             continue
@@ -389,8 +389,8 @@ def load_openapi_spec(
         SSRFError: If a bare url fails security validation
         SSRFFetchError: If the pinned fetch is unsafe (redirect, oversized, etc.)
         FileNotFoundError: If the file at path does not exist
-        httpx.HTTPError: If there's an HTTP error when fetching the spec
-        httpx.TimeoutException: If there's a timeout when fetching the spec
+        httpx2.HTTPError: If there's an HTTP error when fetching the spec
+        httpx2.TimeoutException: If there's a timeout when fetching the spec
 
     """
     if not url and not path and validated_url is None:
@@ -428,7 +428,7 @@ def load_openapi_spec(
             except (SSRFError, SSRFFetchError):
                 # Security failures must not be retried away.
                 raise
-            except (httpx.TimeoutException, httpx.HTTPError) as e:
+            except (httpx2.TimeoutException, httpx2.HTTPError) as e:
                 last_exception = e
                 if attempt < 2:  # Don't log on the last attempt
                     logger.warning(f'Attempt {attempt + 1} failed: {e}. Retrying...')
@@ -442,7 +442,7 @@ def load_openapi_spec(
         if last_exception:
             raise last_exception
         else:
-            raise httpx.HTTPError('All retry attempts failed')
+            raise httpx2.HTTPError('All retry attempts failed')
 
     # Load from file
     if path:

@@ -14,7 +14,7 @@
 
 """Comprehensive tests for HTTP client to maximize patch coverage."""
 
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server.utils.http_client import HttpClientFactory
 from unittest.mock import Mock, patch
 
@@ -41,7 +41,7 @@ class TestHttpClientComprehensive:
 
             # Verify logging was called
             mock_logger.debug.assert_called()
-            assert isinstance(client, httpx.AsyncClient)
+            assert isinstance(client, httpx2.AsyncClient)
 
     def test_create_client_with_auth_without_session_manager(self):
         """Test creating HTTP client with auth that doesn't have session manager."""
@@ -56,7 +56,7 @@ class TestHttpClientComprehensive:
 
             # Verify logging was called for auth type
             mock_logger.debug.assert_called()
-            assert isinstance(client, httpx.AsyncClient)
+            assert isinstance(client, httpx2.AsyncClient)
 
     def test_create_client_with_cognito_auth_unauthenticated(self):
         """Test creating HTTP client with unauthenticated CognitoAuth."""
@@ -76,22 +76,22 @@ class TestHttpClientComprehensive:
 
             # Should still create client but log different information
             mock_logger.debug.assert_called()
-            assert isinstance(client, httpx.AsyncClient)
+            assert isinstance(client, httpx2.AsyncClient)
 
     def test_create_client_with_complex_timeout(self):
-        """Test creating HTTP client with httpx.Timeout object."""
-        timeout = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=15.0)
+        """Test creating HTTP client with httpx2.Timeout object."""
+        timeout = httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=15.0)
         client = HttpClientFactory.create_client('https://example.com', timeout=timeout)
 
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
         assert client.timeout == timeout
 
     def test_create_client_with_all_parameters(self):
         """Test creating HTTP client with all possible parameters."""
         headers = {'User-Agent': 'Test-Client', 'Accept': 'application/json'}
-        auth = httpx.BasicAuth('user', 'pass')
+        auth = httpx2.BasicAuth('user', 'pass')
         cookies = {'session': 'test123', 'preference': 'json'}
-        timeout = httpx.Timeout(30.0)
+        timeout = httpx2.Timeout(30.0)
 
         client = HttpClientFactory.create_client(
             base_url='https://api.example.com',
@@ -104,7 +104,7 @@ class TestHttpClientComprehensive:
             max_keepalive=50,
         )
 
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
         assert client.base_url == 'https://api.example.com'
         assert not client.follow_redirects or client.follow_redirects  # Either is acceptable
 
@@ -114,7 +114,7 @@ class TestHttpClientComprehensive:
         """Test that client uses configuration defaults when not specified."""
         client = HttpClientFactory.create_client('https://example.com')
 
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
         # The client should be created with config defaults
 
     def test_create_client_auth_logging_edge_cases(self):
@@ -133,7 +133,7 @@ class TestHttpClientComprehensive:
 
         with patch('awslabs.openapi_mcp_server.utils.http_client.logger'):
             client = HttpClientFactory.create_client('https://example.com', auth=mock_auth)
-            assert isinstance(client, httpx.AsyncClient)
+            assert isinstance(client, httpx2.AsyncClient)
 
     def test_create_client_with_none_values(self):
         """Test creating client with explicit None values."""
@@ -146,7 +146,7 @@ class TestHttpClientComprehensive:
             max_keepalive=None,
         )
 
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
 
     def test_create_client_base_url_variations(self):
         """Test creating client with different base URL formats."""
@@ -154,12 +154,12 @@ class TestHttpClientComprehensive:
             'https://example.com',
             'http://localhost:8080',
             'https://api.service.com/v1',
-            'https://subdomain.example.com/path',  # Removed port to avoid httpx normalization
+            'https://subdomain.example.com/path',  # Removed port to avoid httpx2 normalization
         ]
 
         for url in test_urls:
             client = HttpClientFactory.create_client(url)
-            assert isinstance(client, httpx.AsyncClient)
+            assert isinstance(client, httpx2.AsyncClient)
             # Just verify the client was created successfully
             assert client.base_url is not None
 
@@ -172,5 +172,5 @@ class TestHttpClientComprehensive:
         }
 
         client = HttpClientFactory.create_client('https://example.com', headers=custom_headers)
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
         # Headers should be set on the client

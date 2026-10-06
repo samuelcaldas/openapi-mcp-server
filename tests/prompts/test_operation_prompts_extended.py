@@ -15,7 +15,7 @@
 import asyncio
 from awslabs.openapi_mcp_server.prompts.generators.operation_prompts import create_operation_prompt
 from fastmcp import FastMCP
-from fastmcp.prompts.prompt import Prompt
+from fastmcp.prompts import Prompt
 
 
 def test_operation_prompt_with_security():
@@ -64,6 +64,7 @@ def test_operation_prompt_with_security():
         parameters=parameters,
         responses=responses,
         paths=paths,
+        route_classifications={(path, method.upper()): 'tool'},
         security=security,
     )
 
@@ -150,6 +151,7 @@ def test_operation_prompt_with_enum_parameters():
         parameters=parameters,
         responses=responses,
         paths=paths,
+        route_classifications={(path, method.upper()): 'tool'},
     )
 
     # Verify prompt was created successfully
@@ -237,6 +239,7 @@ def test_operation_prompt_with_request_body_schema():
         parameters=parameters,
         responses=responses,
         paths=paths,
+        route_classifications={(path, method.upper()): 'tool'},
         request_body=request_body,
     )
 

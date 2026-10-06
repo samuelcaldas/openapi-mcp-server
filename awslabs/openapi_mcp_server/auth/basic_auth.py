@@ -14,7 +14,7 @@
 """Basic authentication provider."""
 
 import base64
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.api.config import Config
 from awslabs.openapi_mcp_server.auth.auth_cache import cached_auth_data
@@ -40,7 +40,7 @@ class BasicAuthProvider(BaseAuthProvider):
         # Store credentials before calling super().__init__
         self._username = config.auth_username
         self._password = config.auth_password
-        self._httpx_auth: Optional[httpx.Auth] = None
+        self._httpx_auth: Optional[httpx2.Auth] = None
         self._credentials_hash = None
 
         # Call parent initializer which will validate and initialize auth
@@ -135,7 +135,7 @@ class BasicAuthProvider(BaseAuthProvider):
         return {'Authorization': f'Basic {encoded_auth}'}
 
     @cached_auth_data(ttl=3600)  # Cache for 1 hour by default
-    def _generate_httpx_auth(self, username: str, password: str) -> httpx.BasicAuth:
+    def _generate_httpx_auth(self, username: str, password: str) -> httpx2.BasicAuth:
         """Generate HTTPX auth object.
 
         This method is cached to avoid regenerating auth objects for the same credentials.
@@ -145,17 +145,17 @@ class BasicAuthProvider(BaseAuthProvider):
             password: Password
 
         Returns:
-            httpx.BasicAuth: HTTPX auth object
+            httpx2.BasicAuth: HTTPX auth object
 
         """
         logger.debug(f'Generating new HTTPX basic auth object for user: {username}')
-        return httpx.BasicAuth(username=username, password=password)
+        return httpx2.BasicAuth(username=username, password=password)
 
-    def get_httpx_auth(self) -> Optional[httpx.Auth]:
+    def get_httpx_auth(self) -> Optional[httpx2.Auth]:
         """Get authentication object for HTTPX.
 
         Returns:
-            Optional[httpx.Auth]: Basic auth object for HTTPX client
+            Optional[httpx2.Auth]: Basic auth object for HTTPX client
 
         """
         return self._httpx_auth

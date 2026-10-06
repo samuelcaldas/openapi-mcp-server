@@ -116,9 +116,9 @@ class TestCoverageBoost:
         assert client1 is not None
 
         # Test with basic auth
-        import httpx
+        import httpx2
 
-        auth = httpx.BasicAuth('user', 'pass')
+        auth = httpx2.BasicAuth('user', 'pass')
         client2 = HttpClientFactory.create_client('https://example.com', auth=auth)
         assert client2 is not None
 
@@ -153,7 +153,7 @@ class TestCoverageBoost:
     def test_type_annotations_coverage(self):
         """Test that type annotations don't affect runtime behavior."""
         # Test with various types that match the annotations
-        import httpx
+        import httpx2
 
         # Test string base_url
         client1 = HttpClientFactory.create_client('https://example.com')
@@ -163,8 +163,8 @@ class TestCoverageBoost:
         client2 = HttpClientFactory.create_client('https://example.com', headers={'key': 'value'})
         assert client2 is not None
 
-        # Test httpx.Timeout
-        timeout = httpx.Timeout(30.0)
+        # Test httpx2.Timeout
+        timeout = httpx2.Timeout(30.0)
         client3 = HttpClientFactory.create_client('https://example.com', timeout=timeout)
         assert client3 is not None
 

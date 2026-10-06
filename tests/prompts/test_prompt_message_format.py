@@ -70,6 +70,7 @@ class TestOperationPromptMessageFormat:
             responses={'200': {'description': 'OK'}},
             security=[],
             paths=SIMPLE_PATHS,
+            route_classifications={('/pets', 'GET'): 'resource'},
         )
 
         prompt = mock_server.add_prompt.call_args[0][0]
@@ -97,6 +98,7 @@ class TestOperationPromptMessageFormat:
             responses={'200': {'description': 'OK'}},
             security=[],
             paths=SIMPLE_PATHS,
+            route_classifications={('/pets', 'GET'): 'resource'},
         )
 
         prompt = mock_server.add_prompt.call_args[0][0]
@@ -124,6 +126,7 @@ class TestOperationPromptMessageFormat:
             responses={'200': {'description': 'OK'}},
             security=[],
             paths=SIMPLE_PATHS,
+            route_classifications={('/pets', 'GET'): 'resource'},
         )
 
         prompt = mock_server.add_prompt.call_args[0][0]
@@ -233,6 +236,7 @@ class TestOperationPromptMessageFormat:
             responses={'200': {'description': 'OK'}},
             security=[],
             paths=SIMPLE_PATHS,
+            route_classifications={('/pets', 'GET'): 'resource'},
         )
 
         prompt = mock_server.add_prompt.call_args[0][0]
@@ -316,7 +320,7 @@ class TestMessageTypeRegression:
 
     def test_dict_message_would_fail_convert_result(self):
         """Demonstrate that dict messages cause TypeError (the original bug)."""
-        from fastmcp.prompts.prompt import Prompt
+        from fastmcp.prompts import Prompt
 
         def bad_handler():
             return [{'role': 'user', 'content': {'type': 'text', 'text': 'hi'}}]
@@ -329,7 +333,7 @@ class TestMessageTypeRegression:
 
     def test_string_messages_are_acceptable(self):
         """Strings are also valid returns (wrapped to Message by convert_result)."""
-        from fastmcp.prompts.prompt import Prompt
+        from fastmcp.prompts import Prompt
 
         def str_handler():
             return ['hello world']

@@ -13,14 +13,14 @@
 # limitations under the License.
 """Extended tests for the HTTP client module."""
 
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server.utils.http_client import (
     HttpClientFactory,
 )
 from unittest.mock import MagicMock, patch
 
 
-@patch('awslabs.openapi_mcp_server.utils.http_client.httpx.AsyncClient')
+@patch('awslabs.openapi_mcp_server.utils.http_client.httpx2.AsyncClient')
 def test_http_client_factory_create_client(mock_async_client):
     """Test creating an HTTP client with default settings."""
     # Setup mock
@@ -37,14 +37,14 @@ def test_http_client_factory_create_client(mock_async_client):
     # Check that the client was created with the correct parameters
     call_args = mock_async_client.call_args[1]
     assert call_args['base_url'] == 'https://example.com'
-    # The timeout is now a httpx.Timeout object, not a float
-    assert isinstance(call_args['timeout'], httpx.Timeout)
+    # The timeout is now a httpx2.Timeout object, not a float
+    assert isinstance(call_args['timeout'], httpx2.Timeout)
     assert call_args['timeout'].connect == 30.0
     assert call_args['limits'].max_connections == 100
     assert call_args['limits'].max_keepalive_connections == 20
 
 
-@patch('awslabs.openapi_mcp_server.utils.http_client.httpx.AsyncClient')
+@patch('awslabs.openapi_mcp_server.utils.http_client.httpx2.AsyncClient')
 def test_http_client_factory_create_client_with_custom_settings(mock_async_client):
     """Test creating an HTTP client with custom settings."""
     # Setup mock
@@ -53,7 +53,7 @@ def test_http_client_factory_create_client_with_custom_settings(mock_async_clien
 
     # Custom headers, auth, and cookies
     headers = {'X-Custom-Header': 'value'}
-    auth = httpx.BasicAuth(username='user', password='pass')
+    auth = httpx2.BasicAuth(username='user', password='pass')
     cookies = {'session': '123456'}
 
     # Call the function
@@ -71,6 +71,6 @@ def test_http_client_factory_create_client_with_custom_settings(mock_async_clien
     assert call_args['headers'] == headers
     assert call_args['auth'] == auth
     assert call_args['cookies'] == cookies
-    # The timeout is now a httpx.Timeout object, not a float
-    assert isinstance(call_args['timeout'], httpx.Timeout)
+    # The timeout is now a httpx2.Timeout object, not a float
+    assert isinstance(call_args['timeout'], httpx2.Timeout)
     assert call_args['timeout'].connect == 60.0

@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for SSRF protection in multi-spec configuration."""
 
-import httpx
+import httpx2
 import json
 import pytest
 from awslabs.openapi_mcp_server.api.config import Config
@@ -36,6 +36,7 @@ PETSTORE_SPEC = {
                 'operationId': 'listPets',
                 'summary': 'List pets',
                 'tags': ['pet'],
+                'parameters': [{'name': 'limit', 'in': 'query', 'schema': {'type': 'integer'}}],
                 'responses': {'200': {'description': 'OK'}},
             },
         },
@@ -535,7 +536,7 @@ async def test_additional_spec_load_failure_is_skipped():
 
         server = await create_mcp_server_async(config)
         tools = await server.list_tools()
-        names = {t.name for t in tools}
+        names = {tool.name for tool in tools}
         assert 'listPets' in names
         assert 'createPayment' not in names
 
@@ -707,9 +708,9 @@ async def test_additional_spec_basic_auth():
         # Second call is for the additional spec
         extra_call = mock_client.call_args_list[1]
         extra_kwargs = extra_call.kwargs if extra_call.kwargs else {}
-        import httpx
+        import httpx2
 
-        assert isinstance(extra_kwargs.get('auth'), httpx.BasicAuth)
+        assert isinstance(extra_kwargs.get('auth'), httpx2.BasicAuth)
 
 
 @pytest.mark.asyncio
@@ -765,7 +766,7 @@ async def test_additional_spec_unrecognized_auth_type_warns():
 
 
 class _FakeStreamResponse:
-    """Minimal stand-in for an httpx streaming response."""
+    """Minimal stand-in for an httpx2 streaming response."""
 
     def __init__(self, status_code=200, headers=None, chunks=(b'{}',)):
         self.status_code = status_code
@@ -774,7 +775,7 @@ class _FakeStreamResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError('error', request=None, response=None)
+            raise httpx2.HTTPStatusError('error', request=None, response=None)
 
     def iter_bytes(self):
         yield from self._chunks
@@ -787,7 +788,7 @@ class _FakeStreamResponse:
 
 
 def _make_fake_client(capture, response):
-    """Build a fake httpx.Client class that records the URL it was asked to dial."""
+    """Build a fake httpx2.Client class that records the URL it was asked to dial."""
 
     class _FakeClient:
         def __init__(self, *args, **kwargs):
@@ -824,7 +825,7 @@ def test_pinned_fetch_connects_to_pinned_ip_with_host_and_sni():
     """The fetch dials the pinned IP literal, keeping Host + SNI = validated host."""
     capture = {}
     response = _FakeStreamResponse(chunks=(b'{"ok": true}',))
-    with patch('httpx.Client', _make_fake_client(capture, response)):
+    with patch('httpx2.Client', _make_fake_client(capture, response)):
         body = _pinned_fetch(_validated(), allow_http=False)
 
     assert body == b'{"ok": true}'
@@ -843,7 +844,7 @@ def test_pinned_fetch_refuses_redirect_to_metadata():
     response = _FakeStreamResponse(
         status_code=302, headers={'location': 'http://169.254.169.254/latest/meta-data/'}
     )
-    with patch('httpx.Client', _make_fake_client(capture, response)):
+    with patch('httpx2.Client', _make_fake_client(capture, response)):
         with pytest.raises(SSRFFetchError, match='redirect'):
             _pinned_fetch(_validated(), allow_http=False)
 
@@ -855,7 +856,7 @@ def test_pinned_fetch_rejects_oversized_body_streaming():
     """A body exceeding the size cap is rejected while streaming."""
     capture = {}
     response = _FakeStreamResponse(chunks=(b'x' * 50, b'y' * 50))
-    with patch('httpx.Client', _make_fake_client(capture, response)):
+    with patch('httpx2.Client', _make_fake_client(capture, response)):
         with pytest.raises(SSRFFetchError, match='too large'):
             _pinned_fetch(_validated(), allow_http=False, max_size=10)
 
@@ -864,7 +865,7 @@ def test_pinned_fetch_rejects_oversized_body_content_length():
     """A body advertising an oversized Content-Length is rejected up front."""
     capture = {}
     response = _FakeStreamResponse(headers={'content-length': '999999'}, chunks=(b'{}',))
-    with patch('httpx.Client', _make_fake_client(capture, response)):
+    with patch('httpx2.Client', _make_fake_client(capture, response)):
         with pytest.raises(SSRFFetchError, match='too large'):
             _pinned_fetch(_validated(), allow_http=False, max_size=10)
 
@@ -910,7 +911,7 @@ def test_load_openapi_spec_rebinding_never_hits_metadata_ip():
             'awslabs.openapi_mcp_server.utils.url_validator.resolve_hostname',
             side_effect=rebinding_resolve,
         ),
-        patch('httpx.Client', _make_fake_client(capture, response)),
+        patch('httpx2.Client', _make_fake_client(capture, response)),
         patch(
             'awslabs.openapi_mcp_server.utils.openapi._parse_spec_bytes',
             return_value=PETSTORE_SPEC,
@@ -970,11 +971,11 @@ def test_pinned_fetch_tries_next_ip_on_transient_error():
             capture.setdefault('urls', []).append(url)
             type(self)._calls['n'] += 1
             if type(self)._calls['n'] == 1:
-                raise httpx.ConnectError('connection refused')
+                raise httpx2.ConnectError('connection refused')
             return good
 
     vurl = _validated(resolved_ips=['93.184.216.34', '198.51.100.7'])
-    with patch('httpx.Client', _FlakyClient):
+    with patch('httpx2.Client', _FlakyClient):
         body = _pinned_fetch(vurl, allow_http=False)
 
     assert body == b'{"ok": true}'
@@ -999,11 +1000,11 @@ def test_pinned_fetch_raises_last_error_when_all_ips_fail():
             return False
 
         def stream(self, *args, **kwargs):
-            raise httpx.ConnectError('down')
+            raise httpx2.ConnectError('down')
 
     vurl = _validated(resolved_ips=['93.184.216.34', '198.51.100.7'])
-    with patch('httpx.Client', _AlwaysFailClient):
-        with pytest.raises(httpx.ConnectError, match='down'):
+    with patch('httpx2.Client', _AlwaysFailClient):
+        with pytest.raises(httpx2.ConnectError, match='down'):
             _pinned_fetch(vurl, allow_http=False)
 
 
@@ -1106,7 +1107,7 @@ def test_pinned_fetch_http_opt_in_uses_no_sni():
     capture = {}
     response = _FakeStreamResponse(chunks=(b'{}',))
     vurl = _validated(original_url='http://spec.example.com/openapi.json', port=80)
-    with patch('httpx.Client', _make_fake_client(capture, response)):
+    with patch('httpx2.Client', _make_fake_client(capture, response)):
         _pinned_fetch(vurl, allow_http=True)
 
     req = capture['requests'][0]

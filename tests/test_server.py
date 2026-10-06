@@ -36,6 +36,7 @@ def mock_config():
     config.auth_api_key_in = 'header'
     config.version = '1.0.0'
     config.transport = 'stdio'
+    config.additional_specs = ''
     return config
 
 

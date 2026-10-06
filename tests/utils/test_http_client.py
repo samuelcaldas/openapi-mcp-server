@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for the HTTP client utilities."""
 
-import httpx
+import httpx2
 import pytest
 from awslabs.openapi_mcp_server.utils.http_client import (
     HttpClientFactory,
@@ -28,28 +28,28 @@ async def test_http_client_factory():
     """Test creating an HTTP client using the factory."""
     # Test with default parameters
     client = HttpClientFactory.create_client('https://example.com')
-    assert isinstance(client, httpx.AsyncClient)
-    assert client._base_url == httpx.URL('https://example.com')
+    assert isinstance(client, httpx2.AsyncClient)
+    assert client._base_url == httpx2.URL('https://example.com')
     await client.aclose()
 
     # Test with auth
-    auth = httpx.BasicAuth(username='test', password='test')
+    auth = httpx2.BasicAuth(username='test', password='test')
     client = HttpClientFactory.create_client('https://example.com', auth=auth)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert client._auth == auth
     await client.aclose()
 
     # Test with headers
     headers = {'X-Test': 'test'}
     client = HttpClientFactory.create_client('https://example.com', headers=headers)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert 'X-Test' in client._headers
     assert client._headers['X-Test'] == 'test'
     await client.aclose()
 
 
 @pytest.mark.asyncio
-@patch('httpx.AsyncClient.request')
+@patch('httpx2.AsyncClient.request')
 async def test_make_request(mock_request):
     """Test making a request."""
     # Setup mock
@@ -69,7 +69,7 @@ async def test_make_request(mock_request):
 
 
 @pytest.mark.asyncio
-@patch('httpx.AsyncClient.request')
+@patch('httpx2.AsyncClient.request')
 async def test_make_request_with_params(mock_request):
     """Test making a request with parameters."""
     # Setup mock
@@ -90,7 +90,7 @@ async def test_make_request_with_params(mock_request):
 
 
 @pytest.mark.asyncio
-@patch('httpx.AsyncClient.request')
+@patch('httpx2.AsyncClient.request')
 async def test_make_request_with_json(mock_request):
     """Test making a request with JSON data."""
     # Setup mock
@@ -151,7 +151,7 @@ async def test_make_request_with_retry_and_error():
     mock_response.raise_for_status = MagicMock()
 
     # Set up the mock to fail first, then succeed
-    mock_client.request.side_effect = [httpx.ConnectError('Connection error'), mock_response]
+    mock_client.request.side_effect = [httpx2.ConnectError('Connection error'), mock_response]
 
     # Set USE_TENACITY to False and patch asyncio.sleep to avoid actual delays
     with patch('awslabs.openapi_mcp_server.utils.http_client.USE_TENACITY', False):

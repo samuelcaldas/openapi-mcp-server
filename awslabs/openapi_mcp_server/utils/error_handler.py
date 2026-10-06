@@ -13,7 +13,7 @@
 # limitations under the License.
 """Utilities for error handling in the OpenAPI MCP Server."""
 
-import httpx
+import httpx2
 import json
 from awslabs.openapi_mcp_server import logger
 from typing import Any, Dict, Optional, Type
@@ -114,14 +114,14 @@ ERROR_CLASSES: Dict[Any, Type[APIError]] = {
     503: ServerError,
     504: ServerError,
     # Request error types
-    httpx.ConnectTimeout: ConnectionError,
-    httpx.ReadTimeout: ConnectionError,
-    httpx.ConnectError: NetworkError,
-    httpx.RequestError: NetworkError,
+    httpx2.ConnectTimeout: ConnectionError,
+    httpx2.ReadTimeout: ConnectionError,
+    httpx2.ConnectError: NetworkError,
+    httpx2.RequestError: NetworkError,
 }
 
 
-def extract_error_details(response: httpx.Response) -> Dict[str, Any]:
+def extract_error_details(response: httpx2.Response) -> Dict[str, Any]:
     """Extract error details from an HTTP response.
 
     Args:
@@ -182,7 +182,7 @@ def format_error_message(status_code: int, reason: str, details: Dict[str, Any])
     return message
 
 
-def handle_http_error(error: httpx.HTTPStatusError) -> APIError:
+def handle_http_error(error: httpx2.HTTPStatusError) -> APIError:
     """Convert an HTTPX error to an appropriate APIError subclass."""
     status_code = error.response.status_code
     details = extract_error_details(error.response)
@@ -237,26 +237,26 @@ def handle_http_error(error: httpx.HTTPStatusError) -> APIError:
     return error_class(status_code, message, details=details, original_error=error)
 
 
-def handle_request_error(error: httpx.RequestError) -> APIError:
+def handle_request_error(error: httpx2.RequestError) -> APIError:
     """Convert an HTTPX request error to an appropriate APIError subclass."""
     # Map different request error types to different messages
     error_class = ConnectionError
     for error_type in [
-        httpx.ConnectTimeout,
-        httpx.ReadTimeout,
-        httpx.ConnectError,
-        httpx.RequestError,
+        httpx2.ConnectTimeout,
+        httpx2.ReadTimeout,
+        httpx2.ConnectError,
+        httpx2.RequestError,
     ]:
         if isinstance(error, error_type):
             error_class = ERROR_CLASSES.get(error_type, ConnectionError)
             break
 
     # Get more specific error message based on error type
-    if isinstance(error, httpx.ConnectTimeout):
+    if isinstance(error, httpx2.ConnectTimeout):
         message = 'Connection timed out: The server took too long to respond'
-    elif isinstance(error, httpx.ReadTimeout):
+    elif isinstance(error, httpx2.ReadTimeout):
         message = 'Read timed out: The server took too long to send a response'
-    elif isinstance(error, httpx.ConnectError):
+    elif isinstance(error, httpx2.ConnectError):
         message = f'Connection error: Could not connect to the server: {error}'
     else:
         message = f'Request error: {error}'
@@ -266,8 +266,8 @@ def handle_request_error(error: httpx.RequestError) -> APIError:
 
 
 async def safe_request(
-    client: httpx.AsyncClient, method: str, url: str, **kwargs
-) -> httpx.Response:
+    client: httpx2.AsyncClient, method: str, url: str, **kwargs
+) -> httpx2.Response:
     """Execute an HTTP request with comprehensive error handling.
 
     Args:
@@ -329,14 +329,14 @@ async def safe_request(
 
         return response
 
-    except httpx.HTTPStatusError as e:
+    except httpx2.HTTPStatusError as e:
         # Handle HTTP errors (4xx, 5xx)
         logger.error(
             f'HTTP error when accessing {url}: {e.response.status_code} {e.response.reason_phrase}'
         )
         raise handle_http_error(e)
 
-    except httpx.RequestError as e:
+    except httpx2.RequestError as e:
         # Handle request errors (connection, timeout, etc.)
         logger.error(f'Request error when accessing {url}: {e}')
 

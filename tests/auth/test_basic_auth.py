@@ -179,9 +179,9 @@ class TestBasicAuthProvider:
         # Call _generate_httpx_auth with the required parameters
         auth = provider._generate_httpx_auth('testuser', 'testpass')
 
-        # Check that we get an httpx.BasicAuth object
-        import httpx
+        # Check that we get an httpx2.BasicAuth object
+        import httpx2
 
-        assert isinstance(auth, httpx.BasicAuth)
+        assert isinstance(auth, httpx2.BasicAuth)
         # BasicAuth object stores credentials internally, we can't directly access them
         # but we can verify it's the correct type and was created successfully

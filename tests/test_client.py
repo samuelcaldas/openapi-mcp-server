@@ -16,7 +16,7 @@
 """Test client for OpenAPI MCP Server."""
 
 import asyncio
-import httpx
+import httpx2
 import json
 import logging
 import sys
@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger('test_client')
 
 
-async def list_prompts(client: httpx.AsyncClient) -> List[str]:
+async def list_prompts(client: httpx2.AsyncClient) -> List[str]:
     """List all prompts available from the server."""
     try:
         response = await client.get('/prompts')
@@ -48,7 +48,7 @@ async def list_prompts(client: httpx.AsyncClient) -> List[str]:
         return []
 
 
-async def get_prompt_content(client: httpx.AsyncClient, prompt_name: str) -> Dict[str, Any]:
+async def get_prompt_content(client: httpx2.AsyncClient, prompt_name: str) -> Dict[str, Any]:
     """Get the content of a specific prompt."""
     try:
         response = await client.get(f'/prompts/{prompt_name}')
@@ -64,7 +64,7 @@ async def get_prompt_content(client: httpx.AsyncClient, prompt_name: str) -> Dic
         return {}
 
 
-async def list_tools(client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+async def list_tools(client: httpx2.AsyncClient) -> List[Dict[str, Any]]:
     """List all tools available from the server."""
     try:
         response = await client.get('/tools')
@@ -83,7 +83,7 @@ async def list_tools(client: httpx.AsyncClient) -> List[Dict[str, Any]]:
 async def main() -> None:
     """Test the OpenAPI MCP Server."""
     # Create HTTP client
-    async with httpx.AsyncClient(base_url='http://localhost:8002') as client:
+    async with httpx2.AsyncClient(base_url='http://localhost:8002') as client:
         logger.info('Connected to MCP server')
 
         # List all prompts
