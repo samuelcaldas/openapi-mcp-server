@@ -89,6 +89,22 @@ def _normalize_origin(origin):
     return f'{scheme}://{host}' + (f':{port}' if port is not None else '')
 
 
+def _normalize_bind_host(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Server host must not be empty')
+    host = value.strip()
+    if host.startswith('['):
+        if not host.endswith(']') or not _is_valid_ipv6(host[1:-1]):
+            raise ValueError('Server host must be a valid IP address or hostname')
+        host = host[1:-1]
+    try:
+        return ipaddress.ip_address(host).compressed
+    except ValueError:
+        if not re.fullmatch(r'[A-Za-z0-9.-]+', host) or not _is_valid_dns_host(host):
+            raise ValueError('Server host must be a valid IP address or hostname')
+        return host.lower()
+
+
 def validate_transport_config(config):
     """Validate transport-facing configuration before API or spec I/O."""
     kind = TransportKind.parse(config.transport)
@@ -98,13 +114,7 @@ def validate_transport_config(config):
         or not 1 <= config.port <= 65535
     ):
         raise ValueError('Server port must be an integer between 1 and 65535')
-    if not isinstance(config.host, str) or not config.host.strip():
-        raise ValueError('Server host must not be empty')
-    host = config.host.strip().strip('[]')
-    if ':' in host and not _is_valid_ipv6(host):
-        raise ValueError('Server host must be a valid IP address or hostname')
-    if ':' not in host and not re.fullmatch(r'[A-Za-z0-9.-]+', host):
-        raise ValueError('Server host must be a valid IP address or hostname')
+    host = _normalize_bind_host(config.host)
     if (
         kind is not TransportKind.STDIO
         and not _is_loopback_host(host)
@@ -113,7 +123,7 @@ def validate_transport_config(config):
         raise ValueError(
             'Non-loopback server host requires --allow-remote-bind or ALLOW_REMOTE_BIND=true'
         )
-    if kind in {TransportKind.STREAMABLE_HTTP, TransportKind.SSE}:
+    if kind is TransportKind.STREAMABLE_HTTP:
         path = config.http_path
         if (
             not isinstance(path, str)
@@ -230,7 +240,7 @@ def is_remote_binding(config):
 
 def _allowed_hosts(config):
     hosts = ['127.0.0.1', 'localhost', '[::1]']
-    configured_host = config.host.strip().strip('[]')
+    configured_host = _normalize_bind_host(config.host)
     if configured_host not in {'0.0.0.0', '::', ''}:
         hosts.append(f'[{configured_host}]' if ':' in configured_host else configured_host)
     for origin in config.allowed_origins:
@@ -244,7 +254,7 @@ def run_transport(server, config):
     """Run a configured FastMCP server through the public transport API."""
     kind = validate_transport_config(config)
     if kind is TransportKind.STDIO:
-        server.run()
+        server.run(transport=kind.value)
         return
     if kind is TransportKind.SSE:
         warning = 'SSE transport is deprecated; prefer streamable HTTP transport'
@@ -253,20 +263,21 @@ def run_transport(server, config):
         path = '/sse'
     else:
         path = config.http_path
+    allowed_hosts = _allowed_hosts(config)
     server.run(
         transport=kind.value,
-        host=config.host,
+        host=_normalize_bind_host(config.host),
         port=config.port,
         path=path,
         host_origin_protection=True,
-        allowed_hosts=_allowed_hosts(config),
+        allowed_hosts=allowed_hosts,
         allowed_origins=list(config.allowed_origins),
         middleware=[
             Middleware(
                 ExplicitOriginMiddleware,
                 allowed_origins=list(config.allowed_origins),
                 loopback_only=not bool(config.allowed_origins),
-                allowed_hosts=_allowed_hosts(config),
+                allowed_hosts=allowed_hosts,
             )
         ],
     )

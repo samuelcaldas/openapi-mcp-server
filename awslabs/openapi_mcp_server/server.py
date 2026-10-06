@@ -157,8 +157,7 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         FastMCP: The configured FastMCP server
 
     """
-    # Config loading validates transport settings before spec or auth setup.
-    # This factory also accepts partial test/programmatic Config-compatible objects.
+    validate_transport_config(config)
 
     # Log environment information
     logger.debug('Environment information:')
@@ -659,14 +658,17 @@ async def get_all_counts(server: FastMCP) -> tuple[int, int, int, int]:
     return len(prompts), len(tools), len(resources), len(resource_templates)
 
 
-def setup_signal_handlers():
-    """Log final metrics and exit cleanly on SIGINT or SIGTERM."""
+def setup_signal_handlers(stop_event=None):
+    """Log final metrics and stop stdio reads or exit on SIGINT/SIGTERM."""
 
     def signal_handler(sig, frame):
         logger.debug(f'Received signal {sig}, shutting down gracefully...')
         summary = metrics.get_summary()
         logger.info(f'Final metrics: {summary}')
         logger.info('Process Interrupted, Shutting down gracefully...')
+        if stop_event is not None:
+            stop_event.set()
+            return
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, signal_handler)
@@ -814,9 +816,6 @@ def main():
     logger.info('Creating MCP server')
     mcp_server = create_mcp_server(config)
 
-    # Set up signal handlers
-    setup_signal_handlers()
-
     try:
         # Get counts of prompts, tools, resources, and resource templates
         prompt_count, tool_count, resource_count, resource_template_count = asyncio.run(
@@ -842,6 +841,16 @@ def main():
         sys.exit(1)
 
     logger.info(f'Running server with {config.transport} transport')
+    if config.transport == 'stdio' and os.name == 'posix':
+        import threading
+        from awslabs.openapi_mcp_server.stdio import interruptible_stdin
+
+        stop_event = threading.Event()
+        setup_signal_handlers(stop_event=stop_event)
+        with interruptible_stdin(stop_event):
+            run_transport(mcp_server, config)
+        return
+    setup_signal_handlers()
     run_transport(mcp_server, config)
 
 

@@ -52,10 +52,57 @@ def test_transport_rejects_invalid_allowed_origins(origin):
         validate_transport_config(Config(allowed_origins=[origin]))
 
 
+@pytest.mark.parametrize('host', ['a..b', '-bad.host', '.', '[localhost]', '[::1'])
+def test_transport_rejects_malformed_bind_hosts(host):
+    """Reject invalid DNS labels and IPv6 brackets before spec I/O."""
+    with pytest.raises(ValueError, match='host'):
+        validate_transport_config(Config(transport='http', host=host, allow_remote_bind=True))
+
+
+def test_network_dispatch_normalizes_bracketed_ipv6():
+    """Pass a socket address, not an HTTP authority, to Uvicorn."""
+    server = MagicMock()
+    run_transport(server, Config(transport='http', host='[::1]'))
+    assert server.run.call_args.kwargs['host'] == '::1'
+
+
+@pytest.mark.asyncio
+async def test_async_factory_rejects_transport_before_spec_io(monkeypatch):
+    """Validate direct factory calls before loading any external specification."""
+    from awslabs.openapi_mcp_server import server as server_module
+
+    def unexpected_spec_io(*arguments, **options):
+        pytest.fail('Specification loading preceded transport validation')
+
+    monkeypatch.setattr(server_module, 'load_openapi_spec', unexpected_spec_io)
+    with pytest.raises(ValueError, match='Unknown transport'):
+        await server_module.create_mcp_server_async(
+            Config(transport='invalid', api_spec_url='https://example.test/openapi.json')
+        )
+
+
 def test_transport_rejects_invalid_http_path():
     """Require an absolute endpoint path, not a URL."""
     with pytest.raises(ValueError, match='path'):
         validate_transport_config(Config(transport='http', http_path='https://host/mcp'))
+
+
+def test_sse_ignores_unused_http_path():
+    """Keep the fixed SSE endpoint independent of Streamable HTTP settings."""
+    assert (
+        validate_transport_config(Config(transport='sse', http_path='unused')) is TransportKind.SSE
+    )
+
+
+def test_network_dispatch_allows_compressed_ipv6_bind_host():
+    """Allow a client's canonical IPv6 Host for an expanded listener address."""
+    from fastmcp.server.http import _host_matches
+
+    server = MagicMock()
+    config = Config(transport='http', host='2001:0db8::1', allow_remote_bind=True)
+    run_transport(server, config)
+
+    assert _host_matches('[2001:db8::1]:8000', server.run.call_args.kwargs['allowed_hosts'])
 
 
 def test_remote_host_requires_explicit_opt_in():
@@ -113,7 +160,24 @@ def test_run_transport_uses_stdio_default():
 
     run_transport(server, config)
 
-    server.run.assert_called_once_with()
+    server.run.assert_called_once_with(transport='stdio')
+
+
+def test_stdio_does_not_inherit_fastmcp_network_transport(monkeypatch):
+    """Keep upstream settings from bypassing the wrapper's network guards."""
+    import fastmcp
+
+    monkeypatch.setattr(fastmcp.settings, 'transport', 'http')
+    server = FastMCP('stdio-settings-test')
+    selected = []
+
+    async def record_run(transport=None, **options):
+        selected.append(transport or fastmcp.settings.transport)
+
+    monkeypatch.setattr(server, 'run_async', record_run)
+    run_transport(server, Config())
+
+    assert selected == ['stdio']
 
 
 @pytest.mark.parametrize(

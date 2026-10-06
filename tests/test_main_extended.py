@@ -56,7 +56,7 @@ def test_main_with_stdio_transport(
     mock_load_config.assert_called_once_with(mock_args)
     mock_create_mcp_server.assert_called_once_with(mock_config)
     mock_setup_signal_handlers.assert_called_once()
-    mock_server.run.assert_called_once_with()
+    mock_server.run.assert_called_once_with(transport='stdio')
 
     # Verify that the counts were logged
     mock_logger.info.assert_any_call(

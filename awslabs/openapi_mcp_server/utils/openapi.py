@@ -122,13 +122,11 @@ def _basic_parse(content: bytes) -> Any:
     caller (``_reject_external_refs``) handles any node type.
 
     YAML is parsed with PyYAML when installed, then with ``ruamel-yaml`` (a
-    ``prance`` dependency) as a fallback. The ruamel fallback matters for the
-    external-``$ref`` prescan: ``prance`` parses YAML via ``ruamel-yaml``, which
-    accepts inputs PyYAML rejects (e.g. a tab after a mapping key). Without also
-    trying ruamel when PyYAML *fails*, such a document would be treated as
-    unparseable here, skip ``_reject_external_refs``, yet still be parsed and
-    ``$ref``-resolved by ``prance`` — silently re-opening the SSRF/LFI bypass. So
-    the prescan must never parse *less* than prance would.
+    ``prance`` dependency) as a fallback. The fallback matters for the external-
+    ``$ref`` prescan: if PyYAML rejects content that ``prance`` can parse, skipping
+    the ruamel attempt would let that document bypass ``_reject_external_refs`` and
+    still be parsed and ``$ref``-resolved by ``prance``. The prescan must never
+    parse *less* than prance would.
     """
     try:
         return json.loads(content)

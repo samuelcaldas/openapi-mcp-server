@@ -28,7 +28,7 @@ def test_config_default_values():
     assert config.transport == 'stdio'
     from awslabs.openapi_mcp_server import __version__
 
-    assert config.version == __version__
+    assert config.version == __version__ == '1.2.0'
 
 
 def test_config_custom_values():
