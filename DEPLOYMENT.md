@@ -2,7 +2,7 @@
 
 [← Back to main README](README.md)
 
-This document provides guidance on deploying the OpenAPI MCP Server in various environments. The current release exposes the `stdio` transport only; SSE and Streamable HTTP are reserved for future work aligned with the official MCP Python SDK.
+This document covers local `stdio` use and network deployment with Streamable HTTP or legacy SSE. `stdio` remains the default; Streamable HTTP serves `/mcp`, while SSE serves `/sse`. Network transports have no built-in inbound MCP authentication.
 
 ## Building and Deploying with Docker
 
@@ -25,23 +25,29 @@ docker build -t openapi-mcp-server:latest .
 Once the image is built, you can run it locally:
 
 ```bash
-# Run with Petstore API example
-docker run -p 8000:8000 \
+# Local MCP clients use stdio; no network port is needed.
+docker run -i \
   -e API_NAME=petstore \
   -e API_BASE_URL=https://petstore3.swagger.io/api/v3 \
   -e API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json \
+  -e TZ=America/Sao_Paulo \
   openapi-mcp-server:latest
 
-# Run with custom API configuration
+# Streamable HTTP behind an operator-managed, authenticated gateway.
 docker run -p 8000:8000 \
   -e API_NAME=myapi \
   -e API_BASE_URL=https://api.example.com \
   -e API_SPEC_URL=https://api.example.com/openapi.json \
-  -e SERVER_TRANSPORT=stdio \
-  -e ENABLE_PROMETHEUS=false \
-  -e ENABLE_OPERATION_PROMPTS=true \
+  -e SERVER_TRANSPORT=http \
+  -e SERVER_HOST=0.0.0.0 \
+  -e SERVER_PORT=8000 \
+  -e ALLOW_REMOTE_BIND=true \
+  -e ALLOWED_ORIGINS=https://mcp.example.com \
+  -e TZ=America/Sao_Paulo \
   openapi-mcp-server:latest
 ```
+
+`ALLOW_REMOTE_BIND=true` only permits a non-loopback listener; it does not add inbound authentication. Put remote access behind a secure gateway. Configure Nginx Proxy Manager (NPM) manually; do not expose an unauthenticated listener directly to the network.
 
 ### Environment Variables for Docker
 
@@ -52,9 +58,12 @@ You can customize the container behavior using environment variables:
 -e SERVER_NAME="My API Server" \
 -e SERVER_DEBUG=true \
 -e SERVER_MESSAGE_TIMEOUT=60 \
--e SERVER_HOST="0.0.0.0" \
+-e SERVER_HOST="127.0.0.1" \
 -e SERVER_PORT=8000 \
 -e SERVER_TRANSPORT="stdio" \
+-e SERVER_HTTP_PATH="/mcp" \
+-e ALLOW_REMOTE_BIND="false" \
+-e ALLOWED_ORIGINS="" \
 -e LOG_LEVEL="INFO" \
 
 # API configuration
@@ -147,9 +156,52 @@ If you encounter issues:
 4. Check that the port mapping is correct (-p 8000:8000)
 5. Verify network connectivity for external API access
 
-## Transport status
+## Network transports
 
-This fork currently supports `stdio` only. SSE and Streamable HTTP are not implemented yet; deployment guidance for those transports will be added only when the corresponding MCP SDK integration is available.
+`stdio` is the default for local MCP clients. Select a network transport explicitly with `--transport http` (alias for `streamable-http`) or `--transport sse`. Streamable HTTP uses `/mcp` by default; legacy SSE uses `/sse`. SSE is retained for compatibility and should only be used when required by an existing client.
+
+| CLI option | Environment variable | Default | Purpose |
+|---|---|---|---|
+| `--transport` | `SERVER_TRANSPORT` | `stdio` | `stdio`, `http`, `streamable-http`, or `sse` |
+| `--host` | `SERVER_HOST` | `127.0.0.1` | Listener address |
+| `--port` | `SERVER_PORT` | `8000` | Listener port |
+| `--http-path` | `SERVER_HTTP_PATH` | `/mcp` | Streamable HTTP endpoint path |
+| `--allow-remote-bind` | `ALLOW_REMOTE_BIND=true` | disabled | Required for any non-loopback bind |
+| `--allowed-origins` | `ALLOWED_ORIGINS` | loopback origins only | Comma-separated exact `http(s)` origins trusted for browser/proxy requests |
+
+CLI options override their corresponding environment variables. `--http-path` must be an absolute path, not a URL or a path containing a query or fragment. SSE keeps its `/sse` endpoint. Missing `Origin` is allowed for non-browser MCP clients. Host and Origin checks remain enabled for all network transports; remote binding does not disable them. These checks are not CORS and do not authenticate callers. Configure explicit trusted origins when a reverse proxy requires them, and preserve the intended host/origin at the proxy boundary. NPM configuration is manual.
+
+The server has no inbound MCP authentication. The existing API auth options (`AUTH_TYPE`, `AUTH_TOKEN`, API key, Basic, or Cognito) authenticate outbound requests from this server to the OpenAPI API; they do not protect inbound MCP connections. Remote binding requires an operator-managed secure gateway that authenticates and authorizes callers. Do not expose a remote listener without one.
+
+Examples:
+
+```bash
+# Streamable HTTP on loopback, reachable only from this host
+awslabs.openapi-mcp-server --transport http --api-name petstore \
+  --api-url https://petstore3.swagger.io/api/v3 \
+  --spec-url https://petstore3.swagger.io/api/v3/openapi.json
+
+# Remote listener; publish only behind a secure gateway
+awslabs.openapi-mcp-server --transport streamable-http --host 0.0.0.0 \
+  --port 8000 --allow-remote-bind --allowed-origins https://mcp.example.com \
+  --api-name petstore --api-url https://petstore3.swagger.io/api/v3 \
+  --spec-url https://petstore3.swagger.io/api/v3/openapi.json
+```
+
+```bash
+# Container example; publish through a secure gateway, not directly
+# Configure Nginx Proxy Manager manually.
+docker run -p 8000:8000 \
+  -e API_NAME=petstore \
+  -e API_BASE_URL=https://petstore3.swagger.io/api/v3 \
+  -e API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json \
+  -e SERVER_TRANSPORT=http -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 \
+  -e ALLOW_REMOTE_BIND=true -e ALLOWED_ORIGINS=https://mcp.example.com \
+  -e TZ=America/Sao_Paulo \
+  openapi-mcp-server:latest
+```
+
+For remote deployments, set an application timezone environment variable supported by the container when needed; the examples use `TZ=America/Sao_Paulo`.
 
 ## Observability with AWS Services
 

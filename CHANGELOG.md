@@ -60,6 +60,18 @@ Users of `--additional-specs` who relied on the primary API's credentials being 
 Users with `http://` spec URLs must add `--allow-insecure-http` or set `ALLOW_INSECURE_HTTP=true`.
 Users with internal/private network spec URLs must add `--allow-private-networks` or set `ALLOW_PRIVATE_NETWORKS=true`.
 
+## [1.2.0] - 2026-10-06
+
+### Added
+- Streamable HTTP and legacy SSE transports alongside the default `stdio` transport; network endpoints are `/mcp` and `/sse`.
+- Explicit remote-bind opt-in, loopback-by-default host/origin protections, and guidance for securing unauthenticated inbound MCP connections.
+
+### Changed
+- Upgraded FastMCP integrations and HTTP transport dependencies for FastMCP 4.
+
+### Security
+- Inbound MCP transport access remains unauthenticated; API credentials authenticate outbound API requests only. Remote deployment requires an operator-managed authenticated gateway.
+
 ## [0.3.0] - 2026-04-09
 
 ### Added

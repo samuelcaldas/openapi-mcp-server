@@ -7,7 +7,7 @@ allow-direct-references = true
 
 [project]
 name = "awslabs.openapi-mcp-server"
-version = "1.1.6"
+version = "1.2.0"
 description = "An independently maintained OpenAPI server for the Model Context Protocol (MCP), derived from AWS Labs"
 readme = "README.md"
 requires-python = ">=3.10"

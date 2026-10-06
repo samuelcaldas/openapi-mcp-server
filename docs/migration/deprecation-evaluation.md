@@ -62,7 +62,7 @@ _NOTE: adoption metrics for these three features aren't available, so sizing sta
 ## Appendix C — Ground-Truth Notes (local v1.1.0 source)
 - Wrapper confirmed: `awslabs/openapi_mcp_server/server.py:394` builds `FastMCP(providers=[...])`.
 - Auth modules present: `basic_auth.py`, `bearer_auth.py`, `api_key_auth.py`, `cognito_auth.py`.
-- Transport: **stdio only** (`server.py:739–740`); README/CHANGELOG SSE mentions are stale.
+- At v1.1.0, transport was **stdio only** (`server.py:739–740`); v1.2.0 adds Streamable HTTP and SSE transport support.
 - Naming-collision caveat: multiple distinct repos share the name `openapi-mcp-server` (janwilmake vs. snaggle-ai vs. Tim Kellogg's original) and `openapi-mcp` (jedisct1 vs. mcpjungle) — verify the exact repo before acting.
 - **Upstream repo & version:** canonical repo is **`PrefectHQ/fastmcp`** (`jlowin/fastmcp` is a redirect alias — verified `gh repo view` → `nameWithOwner: PrefectHQ/fastmcp`, not a fork). Current published version **v3.4.4** (PyPI); we pin `fastmcp>=3.3.1,<4`.
 - **Spec-version support (source-verified, FastMCP 3.4.4):** `from_openapi` handles **OpenAPI 3.0.x / 3.1.x only** — the parser reads the `openapi` key (never `swagger`), `openapi-pydantic` ships no v2 models, and no 2.0→3.x converter is in the dependency tree. Our server accepts Swagger 2.0 only because it depends on `prance`, which resolves 2.0→3.0. Migration therefore requires converting 2.0 specs to 3.x first (handled in the migration guide, Appendix E).
@@ -236,7 +236,7 @@ Docs/packaging changes accompany it: README banner, PyPI classifier `Development
 ## Appendix G — Background: Our Server & the FOSS Landscape
 
 ### What our server is
-A thin curation layer over FastMCP. It constructs a `FastMCP(providers=[OpenAPIProvider(...)])` and adds: Basic/Bearer/API-Key/**Cognito** auth, tag include/exclude filtering, enriched tool descriptions, dynamic prompt generation, **multi-spec composition**, **SSRF protection**, and optional **Prometheus metrics**. Transport is **stdio only** in v1.1.0 (`server.py:739`) — earlier SSE references are stale.
+A thin curation layer over FastMCP. It constructs a `FastMCP(providers=[OpenAPIProvider(...)])` and adds: Basic/Bearer/API-Key/**Cognito** auth, tag include/exclude filtering, enriched tool descriptions, dynamic prompt generation, **multi-spec composition**, **SSRF protection**, and optional **Prometheus metrics**. Transport was **stdio only** in v1.1.0 (`server.py:739`); v1.2.0 adds Streamable HTTP and SSE transports.
 
 ### The FOSS landscape (verified, 3-vote adversarial fact-check)
 

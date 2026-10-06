@@ -143,6 +143,14 @@ mcp.add_middleware(PrometheusMiddleware())
 # expose /metrics yourself (e.g. prometheus_client.start_http_server)
 ```
 
+## Transport defaults and authentication
+
+The wrapper defaults to local `stdio`. It also supports Streamable HTTP (`--transport http` or `--transport streamable-http`, endpoint `/mcp`) and legacy SSE (`--transport sse`, endpoint `/sse`). Configure `SERVER_TRANSPORT`, `SERVER_HOST`, `SERVER_PORT`, and `SERVER_HTTP_PATH` through the environment, or use the corresponding CLI options. Network listeners bind to `127.0.0.1` by default; non-loopback binding requires `--allow-remote-bind` or `ALLOW_REMOTE_BIND=true`. This only permits the bind; it does not authenticate callers.
+
+Host and Origin checks remain enabled for network transports. `--allowed-origins` / `ALLOWED_ORIGINS` accepts exact HTTP(S) origins for trusted reverse proxies. These checks are not CORS or authentication. Configure Nginx Proxy Manager manually.
+
+The wrapper's API authentication options protect outbound calls to the OpenAPI API only. They do not authenticate inbound MCP clients. Expose remote listeners only behind an operator-managed secure gateway that authenticates and authorizes callers.
+
 ## Notes & limitations
 
 - **OpenAPI 2.0 (Swagger):** not supported by FastMCP (3.0.x/3.1.x only).
