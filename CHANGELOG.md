@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spec URL loading is DNS-pinned end to end; the previous README note about deploying behind an egress proxy for "full DNS pinning" no longer applies.
 - **BREAKING (edge case)**: OpenAPI specs containing external `$ref`s — remote `http(s)://`/`file://` references, or relative multi-file references like `schemas.yaml#/Pet` — are now refused. Specs using only internal (`#/components/...`) references are unaffected. Bundle multi-file specs into a single document before loading.
 
+## [1.2.0] - 2026-10-06
+
+### Added
+- Streamable HTTP and legacy SSE transports alongside the default `stdio` transport; network endpoints are `/mcp` and `/sse`.
+- Explicit remote-bind opt-in, loopback-by-default host/origin protections, and guidance for securing unauthenticated inbound MCP connections.
+
+### Changed
+- Upgraded to FastMCP 4, MCP SDK 2, and httpx2; retained outbound authentication, SSRF protections, and OpenAPI route behavior.
+
+### Security
+- Inbound MCP transport access remains unauthenticated; API credentials authenticate outbound API requests only. Remote deployment requires an operator-managed authenticated gateway.
+
 ## [1.1.0] - 2026-05-31
 
 ### Added
@@ -59,18 +71,6 @@ Users of `--additional-specs` who relied on the primary API's credentials being 
 
 Users with `http://` spec URLs must add `--allow-insecure-http` or set `ALLOW_INSECURE_HTTP=true`.
 Users with internal/private network spec URLs must add `--allow-private-networks` or set `ALLOW_PRIVATE_NETWORKS=true`.
-
-## [1.2.0] - 2026-10-06
-
-### Added
-- Streamable HTTP and legacy SSE transports alongside the default `stdio` transport; network endpoints are `/mcp` and `/sse`.
-- Explicit remote-bind opt-in, loopback-by-default host/origin protections, and guidance for securing unauthenticated inbound MCP connections.
-
-### Changed
-- Upgraded FastMCP integrations and HTTP transport dependencies for FastMCP 4.
-
-### Security
-- Inbound MCP transport access remains unauthenticated; API credentials authenticate outbound API requests only. Remote deployment requires an operator-managed authenticated gateway.
 
 ## [0.3.0] - 2026-04-09
 

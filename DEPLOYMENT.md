@@ -34,7 +34,7 @@ docker run -i \
   openapi-mcp-server:latest
 
 # Streamable HTTP behind an operator-managed, authenticated gateway.
-docker run -p 8000:8000 \
+docker run -p 127.0.0.1:8000:8000 \
   -e API_NAME=myapi \
   -e API_BASE_URL=https://api.example.com \
   -e API_SPEC_URL=https://api.example.com/openapi.json \
@@ -47,7 +47,7 @@ docker run -p 8000:8000 \
   openapi-mcp-server:latest
 ```
 
-`ALLOW_REMOTE_BIND=true` only permits a non-loopback listener; it does not add inbound authentication. Put remote access behind a secure gateway. Configure Nginx Proxy Manager (NPM) manually; do not expose an unauthenticated listener directly to the network.
+`ALLOW_REMOTE_BIND=true` only permits a non-loopback listener; it does not add inbound authentication. The Docker examples bind the published port to host loopback for a same-host authenticated gateway. If the gateway runs on another host, use a separate trusted container network or firewall that allows only the gateway to reach the server; do not publish the port to untrusted networks. Configure Nginx Proxy Manager (NPM) manually; do not expose an unauthenticated listener directly to the network.
 
 ### Environment Variables for Docker
 
@@ -153,7 +153,7 @@ If you encounter issues:
 1. Check container logs: `docker logs container_id`
 2. Verify environment variables are set correctly
 3. Ensure the API specification URL is accessible from within the container
-4. Check that the port mapping is correct (-p 8000:8000)
+4. For a same-host gateway, check the loopback-only port mapping (`-p 127.0.0.1:8000:8000`); for a remote gateway, verify the trusted network/firewall allows only that gateway.
 5. Verify network connectivity for external API access
 
 ## Network transports
@@ -189,9 +189,10 @@ awslabs.openapi-mcp-server --transport streamable-http --host 0.0.0.0 \
 ```
 
 ```bash
-# Container example; publish through a secure gateway, not directly
+# Container example; host-loopback only for a same-host secure gateway
+# For a remote gateway, use a trusted container network/firewall allowing only that gateway.
 # Configure Nginx Proxy Manager manually.
-docker run -p 8000:8000 \
+docker run -p 127.0.0.1:8000:8000 \
   -e API_NAME=petstore \
   -e API_BASE_URL=https://petstore3.swagger.io/api/v3 \
   -e API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json \

@@ -20,7 +20,7 @@ Source inspection of FastMCP 3.4.4 shows **every wrapper feature is reachable to
 | Tag filtering | `RouteMap.tags` — native |
 | Multi-spec composition | `mount` / `import_server` — native |
 | Enriched descriptions | reachable via the `mcp_component_fn` hook + shipped formatter |
-| Cognito auth (outbound, to the API) | reachable today as glue: acquire the token via boto3 `initiate_auth`, set `Authorization` on the caller-supplied `httpx.AsyncClient`. **Not** `AWSCognitoProvider` — that is *inbound* MCP-server auth (MRO ends in `TokenVerifier`); it validates JWTs from MCP clients, it does not authenticate calls out to the API. No upstream helper covers the token-acquisition/auto-refresh half |
+| Cognito auth (outbound, to the API) | reachable today as glue: acquire the token via boto3 `initiate_auth`, set `Authorization` on the caller-supplied `httpx2.AsyncClient`. **Not** `AWSCognitoProvider` — that is *inbound* MCP-server auth (MRO ends in `TokenVerifier`); it validates JWTs from MCP clients, it does not authenticate calls out to the API. No upstream helper covers the token-acquisition/auto-refresh half |
 | SSRF-safe spec fetch | reachable today: `ssrf_safe_fetch` already ships (`server/auth/ssrf.py:242`) and is importable; call it before `from_openapi` |
 | Prometheus metrics | reachable today: subclass `Middleware` + `mcp.add_middleware(...)` (the `TimingMiddleware` seam, `server/middleware/timing.py:10`) |
 
@@ -31,7 +31,7 @@ So **there is no hard capability gap** — every wrapper feature is reachable to
 - **Low-risk:** same Apache-2.0 engine; no copyleft exposure; removes ~6.6k LOC of maintenance.
 
 ### Risks
-- **Cognito / SSRF-fetch / Prometheus users** must adopt a few lines of glue (Cognito: acquire the token via boto3 and set the `Authorization` header on the `httpx.AsyncClient`; SSRF: import `ssrf_safe_fetch`; Prometheus: add a metrics middleware) — recipes go in the migration guide. No capability is lost.
+- **Cognito / SSRF-fetch / Prometheus users** must adopt a few lines of glue (Cognito: acquire the token via boto3 and set the `Authorization` header on the `httpx2.AsyncClient`; SSRF: import `ssrf_safe_fetch`; Prometheus: add a metrics middleware) — recipes go in the migration guide. No capability is lost.
 - **Standalone (no-code) users** must move from CLI flags to a small Python entrypoint run via `fastmcp run` — same ecosystem, small one-time change.
 
 ### Actions
@@ -102,26 +102,26 @@ If pursued, sequence #3 first — it's the smallest/highest-accept change and es
 
 | Bespoke (our wrapper) | Native FastMCP convention to adopt |
 |---|---|
-| Custom auth adapters (`auth/basic_auth.py`, `bearer_auth.py`, `api_key_auth.py`) | set the corresponding header on the caller-supplied `httpx.AsyncClient` passed to `from_openapi` (these are **outbound**, to the API) |
-| `cognito_auth.py` (outbound: acquires a Cognito token, sets `Authorization` on the API client) | glue: acquire the token via boto3 `initiate_auth`, set `Authorization` on the `httpx.AsyncClient`. **Not** `server/auth/providers/aws.py` (`AWSCognitoProvider`) — that is *inbound* MCP-server auth (validates JWTs from MCP clients), a different direction |
+| Custom auth adapters (`auth/basic_auth.py`, `bearer_auth.py`, `api_key_auth.py`) | set the corresponding header on the caller-supplied `httpx2.AsyncClient` passed to `from_openapi` (these are **outbound**, to the API) |
+| `cognito_auth.py` (outbound: acquires a Cognito token, sets `Authorization` on the API client) | glue: acquire the token via boto3 `initiate_auth`, set `Authorization` on the `httpx2.AsyncClient`. **Not** `server/auth/providers/aws.py` (`AWSCognitoProvider`) — that is *inbound* MCP-server auth (validates JWTs from MCP clients), a different direction |
 | Hand-rolled `--include-tags`/`--exclude-tags` | `RouteMap(tags=…)` route mapping |
 | `enrich_component` description builder | `mcp_component_fn` calling `format_description_with_responses` (native today; DX PR would make it default) |
-| `HttpClientFactory` | caller-supplied `httpx.AsyncClient` passed to `from_openapi` |
+| `HttpClientFactory` | caller-supplied `httpx2.AsyncClient` passed to `from_openapi` |
 | `--additional-specs` multi-spec loader | `mount` / `import_server` composition |
 | Env-var config schema | `from_openapi(...)` kwargs + FastMCP settings/env conventions |
 | Standalone CLI (`uvx awslabs.openapi-mcp-server --spec-url …`) | small entrypoint + `fastmcp run server.py` (see below) |
 
-- **In-process users** → `FastMCP.from_openapi(spec_dict, client=httpx_client)` using the native conventions above.
+- **In-process users** → `FastMCP.from_openapi(spec_dict, client=httpx2_client)` using the native conventions above.
 - **Standalone (no-code) users** → write a small entrypoint and run it with FastMCP's own CLI — same Python ecosystem, no third-party server needed:
   ```python
   # server.py
   # Assumption: the spec is OpenAPI 3.0.x/3.1.x. If it's Swagger/OpenAPI 2.0,
   # convert it to 3.x first (see "Swagger 2.0 users" below) — from_openapi rejects 2.0.
-  import httpx
+  import httpx2
   from fastmcp import FastMCP
   mcp = FastMCP.from_openapi(
-      httpx.get("https://api.example.com/openapi.json").json(),  # trusted, hardcoded URL
-      client=httpx.AsyncClient(base_url="https://api.example.com"),
+      httpx2.get("https://api.example.com/openapi.json").json(),  # trusted, hardcoded URL
+      client=httpx2.AsyncClient(base_url="https://api.example.com"),
   )
   ```
   ```
@@ -129,16 +129,16 @@ If pursued, sequence #3 first — it's the smallest/highest-accept change and es
   ```
   `fastmcp run` auto-discovers a module-level `mcp`/`server`/`app` object (`utilities/mcp_server_config/v1/sources/filesystem.py:154`).
 
-  ⚠️ If the spec URL is **operator- or tenant-supplied** (not hardcoded), the plain `httpx.get` above is an SSRF sink — use the shipped `ssrf_safe_fetch` instead (raising its 5KB default `max_size`):
+  ⚠️ If the spec URL is **operator- or tenant-supplied** (not hardcoded), the plain `httpx2.get` above is an SSRF sink — use the shipped `ssrf_safe_fetch` instead (raising its 5KB default `max_size`):
   ```python
   # server.py — untrusted spec URL
-  import asyncio, json, os, httpx
+  import asyncio, json, os, httpx2
   from fastmcp import FastMCP
   from fastmcp.server.auth.ssrf import ssrf_safe_fetch  # note: currently an internal module
 
   spec_url = os.environ["OPENAPI_URL"]
   raw = asyncio.run(ssrf_safe_fetch(spec_url, max_size=10_000_000))  # HTTPS-only, blocks internal IPs
-  mcp = FastMCP.from_openapi(json.loads(raw), client=httpx.AsyncClient(base_url=os.environ["API_URL"]))
+  mcp = FastMCP.from_openapi(json.loads(raw), client=httpx2.AsyncClient(base_url=os.environ["API_URL"]))
   ```
 - **Swagger 2.0 users** → convert specs to OpenAPI 3.x before calling `from_openapi` (FastMCP only supports 3.0.x / 3.1.x). Recommended: `swagger2openapi` CLI or the online Swagger Converter.
 - **SSRF-fetch dependents** → use the untrusted-URL entrypoint above (`ssrf_safe_fetch` with a raised `max_size`). Its auth-module location is why the `contrib/` give-back (Appendix D) proposes a supported spec-fetch entry point.
@@ -156,7 +156,7 @@ If pursued, sequence #3 first — it's the smallest/highest-accept change and es
   ⚠️ `spec` here must be **`$ref`-resolved**. The formatter's example values come from
   `generate_example_from_schema` (`utilities/openapi/formatters.py:100`), which has no `$ref`
   branch and falls through to the literal `"unknown_type"`. The wrapper never hit this because
-  it runs specs through `prance`'s `ResolvingParser` first, but the `httpx.get(...).json()`
+  it runs specs through `prance`'s `ResolvingParser` first, but the `httpx2.get(...).json()`
   entrypoints above hand `from_openapi` a raw dict with `$ref`s intact — so a response of
   `{"type": "array", "items": {"$ref": "#/components/schemas/Widget"}}` documents its example as
   `["unknown_type"]` while the tool's `output_schema` resolves the reference correctly. Dereference

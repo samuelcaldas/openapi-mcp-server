@@ -16,12 +16,12 @@ own primitives, so the wrapper can be deprecated without loss of function.
 
 | Wrapper feature | Native FastMCP equivalent |
 |---|---|
-| Server construction | `FastMCP.from_openapi(spec_dict, client=httpx_client)` |
-| Basic / Bearer / API-key auth (outbound, to the API) | set headers on the `httpx.AsyncClient` passed to `from_openapi` |
-| Cognito auth (outbound, to the API) | acquire the token yourself (boto3 `initiate_auth`), then set `Authorization` on the `httpx.AsyncClient`. `AWSCognitoProvider` is **not** the equivalent — it protects the MCP server's own *inbound* connections, not calls out to the API. No upstream helper covers the token-acquisition/auto-refresh half. |
+| Server construction | `FastMCP.from_openapi(spec_dict, client=httpx2_client)` |
+| Basic / Bearer / API-key auth (outbound, to the API) | set headers on the `httpx2.AsyncClient` passed to `from_openapi` |
+| Cognito auth (outbound, to the API) | acquire the token yourself (boto3 `initiate_auth`), then set `Authorization` on the `httpx2.AsyncClient`. `AWSCognitoProvider` is **not** the equivalent — it protects the MCP server's own *inbound* connections, not calls out to the API. No upstream helper covers the token-acquisition/auto-refresh half. |
 | Tag filtering (`--include/--exclude-tags`) | `RouteMap(tags=...)` and `server.enable/disable(tags=...)` |
 | Description enrichment | `mcp_component_fn` calling `fastmcp.utilities.openapi.format_description_with_responses` |
-| `HttpClientFactory` | a caller-supplied `httpx.AsyncClient` |
+| `HttpClientFactory` | a caller-supplied `httpx2.AsyncClient` |
 | Multi-spec (`--additional-specs`) | `server.add_provider(...)` / `mount` / `import_server` |
 | SSRF-safe spec fetch | `fastmcp.server.auth.ssrf.ssrf_safe_fetch` (raise its 5 KB `max_size`) |
 | Prometheus metrics | a `Middleware` subclass on the `TimingMiddleware` seam + `mcp.add_middleware(...)` |
@@ -29,14 +29,14 @@ own primitives, so the wrapper can be deprecated without loss of function.
 ## In-process users
 
 ```python
-import httpx
+import httpx2
 from fastmcp import FastMCP
 
 # Assumption: the spec is OpenAPI 3.0.x/3.1.x. Convert Swagger/OpenAPI 2.0
 # to 3.x first (e.g. swagger2openapi) — from_openapi rejects 2.0.
 mcp = FastMCP.from_openapi(
-    httpx.get("https://api.example.com/openapi.json").json(),
-    client=httpx.AsyncClient(base_url="https://api.example.com"),
+    httpx2.get("https://api.example.com/openapi.json").json(),
+    client=httpx2.AsyncClient(base_url="https://api.example.com"),
 )
 ```
 
@@ -58,7 +58,7 @@ mcp = FastMCP.from_openapi(spec, client=client, mcp_component_fn=enrich)
 > `**Responses:**` section come from `generate_example_from_schema`, which has no
 > `$ref` branch — an unresolved reference falls through to the literal string
 > `"unknown_type"`. This wrapper never hit it because it runs specs through
-> `prance`'s `ResolvingParser` first, but `httpx.get(...).json()` above hands
+> `prance`'s `ResolvingParser` first, but `httpx2.get(...).json()` above hands
 > `from_openapi` a raw dict with `$ref`s intact. A response of
 > `{"type": "array", "items": {"$ref": "#/components/schemas/Widget"}}` then
 > documents its example as `["unknown_type"]` — while the tool's own
@@ -70,7 +70,7 @@ mcp = FastMCP.from_openapi(spec, client=client, mcp_component_fn=enrich)
 > from prance.util.resolver import RESOLVE_INTERNAL
 >
 > spec = ResolvingParser(
->     spec_string=httpx.get("https://api.example.com/openapi.json").text,
+>     spec_string=httpx2.get("https://api.example.com/openapi.json").text,
 >     resolve_types=RESOLVE_INTERNAL,   # internal refs only — external ones are an SSRF/LFI sink
 >     backend="openapi-spec-validator",
 > ).specification
@@ -86,11 +86,11 @@ run by FastMCP's own CLI — same Python ecosystem:
 
 ```python
 # server.py
-import httpx
+import httpx2
 from fastmcp import FastMCP
 mcp = FastMCP.from_openapi(
-    httpx.get("https://api.example.com/openapi.json").json(),  # trusted URL
-    client=httpx.AsyncClient(base_url="https://api.example.com"),
+    httpx2.get("https://api.example.com/openapi.json").json(),  # trusted URL
+    client=httpx2.AsyncClient(base_url="https://api.example.com"),
 )
 ```
 
@@ -102,17 +102,17 @@ fastmcp run server.py --transport stdio
 
 ### Untrusted (operator/tenant-supplied) spec URLs
 
-A plain `httpx.get` on an untrusted URL is an SSRF sink. Use the shipped
+A plain `httpx2.get` on an untrusted URL is an SSRF sink. Use the shipped
 SSRF-safe fetcher instead (raising its 5 KB default `max_size`):
 
 ```python
-import asyncio, json, os, httpx
+import asyncio, json, os, httpx2
 from fastmcp import FastMCP
 from fastmcp.server.auth.ssrf import ssrf_safe_fetch  # currently an internal module
 
 raw = asyncio.run(ssrf_safe_fetch(os.environ["OPENAPI_URL"], max_size=10_000_000))
 mcp = FastMCP.from_openapi(json.loads(raw),
-                           client=httpx.AsyncClient(base_url=os.environ["API_URL"]))
+                           client=httpx2.AsyncClient(base_url=os.environ["API_URL"]))
 ```
 
 ## Prometheus metrics

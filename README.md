@@ -136,7 +136,7 @@ For Windows users, the MCP server configuration format is slightly different:
           "ENABLE_OPERATION_PROMPTS": "true",
           "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": "5.0",
           "UVICORN_GRACEFUL_SHUTDOWN": "true"
-      },
+      }
     }
   }
 }
@@ -379,7 +379,7 @@ The project includes a Dockerfile for containerized deployment. To build and run
 docker build -t openapi-mcp-server:latest .
 
 # Run Streamable HTTP behind an operator-managed secure gateway
-docker run -p 8000:8000 \
+docker run -p 127.0.0.1:8000:8000 \
   -e API_NAME=petstore \
   -e API_BASE_URL=https://petstore3.swagger.io/api/v3 \
   -e API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json \
@@ -392,7 +392,7 @@ docker run -p 8000:8000 \
   openapi-mcp-server:latest
 ```
 
-The default `stdio` transport needs no published port. Remote network transports have no inbound MCP authentication; use a secure gateway. See [DEPLOYMENT.md](DEPLOYMENT.md) for transport configuration and security requirements.
+The default `stdio` transport needs no published port. The Docker example binds to host loopback so a same-host authenticated gateway can proxy it without exposing the unauthenticated endpoint externally. If the gateway runs on another host, use a separate trusted container network or firewall that allows only the gateway to reach the server; never publish the port to untrusted networks. Remote network transports have no inbound MCP authentication. See [DEPLOYMENT.md](DEPLOYMENT.md) for transport configuration and security requirements.
 
 ## Testing
 
