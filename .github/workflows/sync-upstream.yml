@@ -1,0 +1,31 @@
+name: Sync upstream OpenAPI MCP Server
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main with complete history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: python -m pip install git-filter-repo
+
+      - name: Synchronize filtered upstream history
+        run: ./scripts/sync-upstream.sh
+
+      - name: Push main
+        run: git push origin main

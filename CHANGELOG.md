@@ -103,7 +103,7 @@ Users with internal/private network spec URLs must add `--allow-private-networks
 - Intelligent route mapping for GET operations with query parameters
 - Authentication support for Basic, Bearer Token, and API Key methods
 - Command line arguments and environment variable configuration
-- Support for SSE and stdio transports
+- Support for stdio transport
 - Dynamic prompt generation based on API structure
 - Centralized configuration system for all server settings
 - Metrics collection and monitoring capabilities

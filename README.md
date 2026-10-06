@@ -1,6 +1,14 @@
-# AWS Labs OpenAPI MCP Server
+# OpenAPI MCP Server
 
 This project is a server that dynamically creates Model Context Protocol (MCP) tools and resources from OpenAPI specifications. It allows Large Language Models (LLMs) to interact with APIs through the Model Context Protocol.
+
+## Origin and derivation
+
+This is an independently maintained fork of the [`awslabs/mcp` OpenAPI MCP Server](https://github.com/awslabs/mcp/tree/main/src/openapi-mcp-server). The implementation, AWS copyright notices, `LICENSE`, and `NOTICE` are retained in accordance with the Apache License 2.0. The fork is maintained at [`samuelcaldas/openapi-mcp-server`](https://github.com/samuelcaldas/openapi-mcp-server), while AWS remains the credited upstream origin.
+
+The project currently exposes the `stdio` transport only. SSE and Streamable HTTP are intentionally out of scope for this initial fork. Future transport work will follow the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and protocol specifications.
+
+Upstream synchronization is deliberately manual. Run `./scripts/sync-upstream.sh` from a clean `main` checkout after installing `git-filter-repo`, or dispatch the [Sync upstream workflow](https://github.com/samuelcaldas/openapi-mcp-server/actions/workflows/sync-upstream.yml) on `main`. The script keeps the filtered AWS history under `refs/remotes/upstream/main`, creates `chore(sync): update from awslabs/mcp` only when the merge changes the tree, and aborts on conflicts.
 
 ## Features
 
@@ -26,7 +34,7 @@ This project is a server that dynamically creates Model Context Protocol (MCP) t
     - Follows MCP-compliant structure with name, description, arguments, and metadata
     - Achieves 70-75% reduction in token usage while maintaining functionality
     - Uses concise descriptions with essential information for better developer experience
-- **Transport Options**: Supports stdio transport
+- **Transport**: Supports the `stdio` transport in this release; network transports are not enabled yet
 - **Flexible Configuration**: Configure via environment variables or command line arguments
 - **OpenAPI Support**: Works with OpenAPI 3.x specifications in JSON or YAML format
 - **OpenAPI Specification Validation**: Validates specifications without failing startup if issues detected, logging warnings instead to work with specs having minor issues or non-standard extensions
@@ -68,8 +76,8 @@ pip install "awslabs.openapi-mcp-server[all]"
 ### From Source
 
 ```bash
-git clone https://github.com/awslabs/mcp.git
-cd mcp/src/openapi-mcp-server
+git clone https://github.com/samuelcaldas/openapi-mcp-server.git
+cd openapi-mcp-server
 pip install -e .
 ```
 
@@ -163,7 +171,7 @@ awslabs.openapi-mcp-server --api-url https://api.example.com --spec-url https://
 awslabs.openapi-mcp-server --api-url https://api.example.com --spec-url https://api.example.com/openapi.json --auth-type api_key --auth-api-key YOUR_API_KEY --auth-api-key-name X-API-Key --auth-api-key-in header # pragma: allowlist secret
 ```
 
-For detailed information about authentication methods, configuration options, and examples, see [AUTHENTICATION.md](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/AUTHENTICATION.md).
+For detailed information about authentication methods, configuration options, and examples, see [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ### Local OpenAPI Specification
 
@@ -301,11 +309,11 @@ export ALLOWED_SPEC_DIRS="/app/specs:/data/api"  # OS path-separated list of all
 
 The OpenAPI MCP Server includes comprehensive documentation to help you get started and make the most of its features:
 
-- [**AUTHENTICATION.md**](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/AUTHENTICATION.md): Detailed information about authentication methods, configuration options, and troubleshooting
-- [**DEPLOYMENT.md**](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/DEPLOYMENT.md): Guidelines for deploying the server in various environments, including Docker and AWS
-- [**AWS_BEST_PRACTICES.md**](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/AWS_BEST_PRACTICES.md): AWS best practices implemented in the server for resilience, caching, and efficiency
-- [**OBSERVABILITY.md**](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/OBSERVABILITY.md): Information about metrics, logging, and monitoring capabilities
-- [**tests/README.md**](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/tests/README.md): Overview of the test structure and strategy
+- [**AUTHENTICATION.md**](AUTHENTICATION.md): Detailed information about authentication methods, configuration options, and troubleshooting
+- [**DEPLOYMENT.md**](DEPLOYMENT.md): Guidelines for deploying the stdio server in Docker and AWS environments
+- [**AWS_BEST_PRACTICES.md**](AWS_BEST_PRACTICES.md): AWS best practices implemented in the server for resilience, caching, and efficiency
+- [**OBSERVABILITY.md**](OBSERVABILITY.md): Information about metrics, logging, and monitoring capabilities
+- [**tests/README.md**](tests/README.md): Overview of the test structure and strategy
 
 ## AWS Best Practices
 
@@ -315,7 +323,7 @@ The OpenAPI MCP Server implements AWS best practices for building resilient, obs
 - **Resilience**: Patterns to handle transient failures and ensure high availability
 - **Observability**: Comprehensive monitoring, metrics, and logging features
 
-For detailed information about these features, including implementation details and configuration options, see [AWS_BEST_PRACTICES.md](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/AWS_BEST_PRACTICES.md).
+For detailed information about these features, including implementation details and configuration options, see [AWS_BEST_PRACTICES.md](AWS_BEST_PRACTICES.md).
 
 ## Security
 
@@ -343,7 +351,7 @@ The server validates all URLs in `additional_specs` entries before fetching:
 | `--allow-private-networks` | `ALLOW_PRIVATE_NETWORKS=true` | Permits private/loopback IPs |
 | `--allowed-spec-dirs` | `ALLOWED_SPEC_DIRS=/path1:/path2` | Restricts `spec_path` to listed directories |
 
-To report security issues, see the [Contributing Guidelines](https://github.com/awslabs/mcp/blob/main/CONTRIBUTING.md#security-issue-notifications).
+To report security issues, open a private report through the [repository security policy](https://github.com/samuelcaldas/openapi-mcp-server/security) or contact the maintainers.
 
 ## Docker Deployment
 
@@ -369,7 +377,7 @@ docker run -p 8000:8000 \
   openapi-mcp-server:latest
 ```
 
-For detailed information about Docker deployment, AWS service integration, and transport considerations, see the [DEPLOYMENT.md](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/DEPLOYMENT.md) file.
+For detailed information about Docker deployment and AWS service integration, see [DEPLOYMENT.md](DEPLOYMENT.md). This guide does not advertise SSE or Streamable HTTP because neither transport is implemented in this fork.
 
 ## Testing
 
@@ -401,7 +409,7 @@ The test suite covers:
 5. **Metrics**: Tests for metrics collection and reporting
 6. **OpenAPI Validation**: Tests for OpenAPI specification validation
 
-For more information about the test structure and strategy, see the [tests/README.md](https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/tests/README.md) file.
+For more information about the test structure and strategy, see the [tests/README.md](tests/README.md) file.
 
 ## Instructions
 

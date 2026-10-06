@@ -408,6 +408,7 @@ def load_openapi_spec(
                 allow_private_networks=allow_private_networks,
             )
 
+        assert validated_url is not None
         logger.info(f'Fetching OpenAPI spec from URL: {validated_url.original_url}')
         last_exception = None
 
@@ -446,7 +447,11 @@ def load_openapi_spec(
     # Load from file
     if path:
         spec_path = Path(path)
-        if not spec_path.exists():
+        try:
+            path_exists = spec_path.exists()
+        except OSError:
+            path_exists = False
+        if not path_exists:
             logger.error(f'OpenAPI spec file not found: {path}')
             raise FileNotFoundError(f'File not found: {path}')
 

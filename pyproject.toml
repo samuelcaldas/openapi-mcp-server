@@ -8,7 +8,7 @@ allow-direct-references = true
 [project]
 name = "awslabs.openapi-mcp-server"
 version = "1.1.6"
-description = "An AWS Labs Model Context Protocol (MCP) server for OpenAPI"
+description = "An independently maintained OpenAPI server for the Model Context Protocol (MCP), derived from AWS Labs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
@@ -66,11 +66,12 @@ dev = [
 all = ["pyyaml>=6.0.3,<7", "prometheus-client>=0.22.1,<1"]
 
 [project.urls]
-Homepage = "https://awslabs.github.io/mcp/"
-Documentation = "https://awslabs.github.io/mcp/servers/openapi-mcp-server/"
-Source = "https://github.com/awslabs/mcp.git"
-"Bug Tracker" = "https://github.com/awslabs/mcp/issues"
-Changelog = "https://github.com/awslabs/mcp/blob/main/src/openapi-mcp-server/CHANGELOG.md"
+Homepage = "https://github.com/samuelcaldas/openapi-mcp-server"
+Documentation = "https://github.com/samuelcaldas/openapi-mcp-server#documentation"
+Source = "https://github.com/samuelcaldas/openapi-mcp-server"
+"Bug Tracker" = "https://github.com/samuelcaldas/openapi-mcp-server/issues"
+Changelog = "https://github.com/samuelcaldas/openapi-mcp-server/blob/main/CHANGELOG.md"
+Upstream = "https://github.com/awslabs/mcp/tree/main/src/openapi-mcp-server"
 
 [project.scripts]
 "awslabs.openapi-mcp-server" = "awslabs.openapi_mcp_server.server:main"

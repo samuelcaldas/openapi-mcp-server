@@ -2,7 +2,7 @@
 
 [← Back to main README](README.md)
 
-This document provides guidance on deploying the OpenAPI MCP Server in various environments, with a focus on AWS deployment options and considerations for the Server-Sent Events (SSE) transport.
+This document provides guidance on deploying the OpenAPI MCP Server in various environments. The current release exposes the `stdio` transport only; SSE and Streamable HTTP are reserved for future work aligned with the official MCP Python SDK.
 
 ## Building and Deploying with Docker
 
@@ -37,7 +37,7 @@ docker run -p 8000:8000 \
   -e API_NAME=myapi \
   -e API_BASE_URL=https://api.example.com \
   -e API_SPEC_URL=https://api.example.com/openapi.json \
-  -e SERVER_TRANSPORT=sse \
+  -e SERVER_TRANSPORT=stdio \
   -e ENABLE_PROMETHEUS=false \
   -e ENABLE_OPERATION_PROMPTS=true \
   openapi-mcp-server:latest
@@ -54,7 +54,7 @@ You can customize the container behavior using environment variables:
 -e SERVER_MESSAGE_TIMEOUT=60 \
 -e SERVER_HOST="0.0.0.0" \
 -e SERVER_PORT=8000 \
--e SERVER_TRANSPORT="sse" \
+-e SERVER_TRANSPORT="stdio" \
 -e LOG_LEVEL="INFO" \
 
 # API configuration
@@ -147,110 +147,9 @@ If you encounter issues:
 4. Check that the port mapping is correct (-p 8000:8000)
 5. Verify network connectivity for external API access
 
-## SSE Transport Considerations
+## Transport status
 
-### Important Notes on Transport Compatibility
-
-- **SSE (Server-Sent Events)** is supported by the Model Context Protocol but not by AWS Lambda
-- **WebSocket** is not yet supported by the Model Context Protocol
-- **stdio** transport is supported for local development but not suitable for web deployments
-
-### Using SSE with Amazon EKS
-
-When deploying to Amazon EKS, SSE works well because containers can maintain persistent connections:
-
-1. **Configure your EKS deployment** to use the SSE transport:
-
-```yaml
-# openapi-mcp-server-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: openapi-mcp-server
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: openapi-mcp-server
-  template:
-    metadata:
-      labels:
-        app: openapi-mcp-server
-    spec:
-      containers:
-      - name: openapi-mcp-server
-        image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/openapi-mcp-server:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: SERVER_TRANSPORT
-          value: "sse"  # Explicitly set SSE transport
-        - name: API_NAME
-          value: "myapi"
-        - name: API_BASE_URL
-          value: "https://api.example.com"
-        - name: API_SPEC_URL
-          value: "https://api.example.com/openapi.json"
-```
-
-2. **Ensure your ingress controller** is configured to support SSE connections:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: openapi-mcp-server-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-spec:
-  rules:
-  - host: api.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: openapi-mcp-server
-            port:
-              number: 80
-```
-
-### API Gateway with SSE - Challenges and Solutions
-
-API Gateway has limitations with SSE due to its timeout constraints:
-
-1. **API Gateway HTTP APIs** have a maximum timeout of 29 seconds, which is insufficient for long-running SSE connections
-2. **API Gateway REST APIs** have similar timeout limitations
-
-#### Recommended Architecture for API Gateway
-
-For production deployments requiring SSE with API Gateway:
-
-1. **Use Amazon EKS or ECS** to host the OpenAPI MCP Server
-2. **Place an Application Load Balancer (ALB)** in front of your EKS/ECS service
-3. **Configure the ALB** with appropriate idle timeout settings (up to 4000 seconds)
-4. **Use API Gateway** only for initial connection establishment and authentication
-5. **Redirect clients** to the ALB endpoint for the actual SSE connection
-
-```
-Client → API Gateway (auth/initial connection) → Redirect → ALB → OpenAPI MCP Server (EKS/ECS)
-```
-
-### Best Practice for Production Deployment with SSE
-
-For the most reliable SSE implementation with AWS services:
-
-1. **Deploy on Amazon ECS with Fargate** for containerized deployment with auto-scaling
-2. **Use an Application Load Balancer** with idle timeout set to at least 120 seconds
-3. **Implement health checks** to ensure container availability
-4. **Set up CloudWatch alarms** to monitor connection counts and response times
-5. **Use AWS X-Ray** for tracing requests through your application
-6. **Implement Amazon Managed Service for Prometheus** for metrics collection and monitoring
-
-This approach provides the most reliable support for SSE connections while still leveraging AWS managed services and maintaining compatibility with the Model Context Protocol.
+This fork currently supports `stdio` only. SSE and Streamable HTTP are not implemented yet; deployment guidance for those transports will be added only when the corresponding MCP SDK integration is available.
 
 ## Observability with AWS Services
 
@@ -385,7 +284,7 @@ For visualization with Amazon Managed Grafana:
 
 ### AWS Application Load Balancer
 
-For setting up an Application Load Balancer with SSE support:
+For general load balancer configuration:
 
 - [What is an Application Load Balancer?](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html)
 - [Creating an Application Load Balancer](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-application-load-balancer.html)
