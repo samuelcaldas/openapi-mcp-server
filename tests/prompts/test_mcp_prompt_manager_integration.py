@@ -244,6 +244,7 @@ async def test_public_component_callback_classifies_routes_for_prompts():
                     'name': 'status',
                     'in': 'query',
                     'required': True,
+                    'description': 'Filter by status',
                     'schema': {'type': 'string'},
                 }
             }
@@ -281,7 +282,14 @@ async def test_public_component_callback_classifies_routes_for_prompts():
         pet_messages = prompts['getPet'].fn(7)
         assert len(list_messages) == 2
         assert len(pet_messages) == 2
-        assert len(prompts['searchPets'].fn('available')) == 1
+        search_prompt = prompts['searchPets']
+        assert [(argument.name, argument.required) for argument in search_prompt.arguments] == [
+            ('status', True)
+        ]
+        assert search_prompt.arguments[0].description == 'Filter by status'
+        assert '**Query parameters:**' in search_prompt.fn.__doc__
+        assert '- status*' in search_prompt.fn.__doc__
+        assert len(search_prompt.fn('available')) == 1
         assert str(list_messages[1].content.resource.uri) == str(
             route_resource_uris[('/pets', 'GET')]
         )

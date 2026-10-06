@@ -84,7 +84,9 @@ class MCPPromptManager:
                     path=path,
                     summary=operation.get('summary', ''),
                     description=operation.get('description', ''),
-                    parameters=self._merge_parameters(paths, path, operation.get('parameters', [])),
+                    parameters=self._merge_parameters(
+                        openapi_spec, path, operation.get('parameters', [])
+                    ),
                     request_body=operation.get('requestBody'),
                     responses=operation.get('responses', {}),
                     security=operation.get('security', []),
@@ -115,16 +117,16 @@ class MCPPromptManager:
         return status
 
     @staticmethod
-    def _merge_parameters(paths: Dict[str, Any], path: str, operation_parameters: Any) -> list:
+    def _merge_parameters(spec: Dict[str, Any], path: str, operation_parameters: Any) -> list:
         """Merge path-level parameters with operation-level overrides."""
+        from awslabs.openapi_mcp_server.server import _get_parameters
+
+        paths = spec.get('paths', {})
         path_item = paths.get(path, {})
         path_parameters = path_item.get('parameters', []) if isinstance(path_item, dict) else []
         combined = {}
-        for parameter in path_parameters if isinstance(path_parameters, list) else []:
-            if isinstance(parameter, dict) and parameter.get('name') and parameter.get('in'):
-                combined[(parameter['name'], parameter['in'])] = parameter
-        for parameter in operation_parameters if isinstance(operation_parameters, list) else []:
-            if isinstance(parameter, dict) and parameter.get('name') and parameter.get('in'):
+        for parameter in _get_parameters(spec, path_parameters, operation_parameters):
+            if parameter.get('name') and parameter.get('in'):
                 combined[(parameter['name'], parameter['in'])] = parameter
         return list(combined.values())
 
