@@ -203,8 +203,11 @@ class TestURLFallbackToFile:
             ),
             patch('awslabs.openapi_mcp_server.utils.openapi.logger') as mock_logger,
         ):
+            # Use a distinct URL so the @cached decorator does not return the
+            # cached result from test_load_openapi_spec_falls_back_to_file_on_http_error,
+            # which shares the same url/path arguments and runs first in the suite.
             result = load_openapi_spec(
-                url='https://example.test/spec.json',
+                url='https://timeout.example.test/spec.json',
                 path='/some/local/spec.json',
             )
 
