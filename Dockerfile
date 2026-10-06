@@ -56,20 +56,22 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Make the directory just in case it doesn't exist
 RUN mkdir -p /root/.local
 
-FROM public.ecr.aws/amazonlinux/amazonlinux@sha256:fb70bd54d4a849293bfef9785ce63aa1eac2557e0167af4f32f56286bd35d783
+# Intermediate stage: create app user/group on AL2023 so UID/GID are baked
+FROM public.ecr.aws/amazonlinux/amazonlinux@sha256:fb70bd54d4a849293bfef9785ce63aa1eac2557e0167af4f32f56286bd35d783 AS user
 
-# Place executables in the environment at the front of the path and include other binaries
-ENV PATH="/app/.venv/bin:$PATH:/usr/sbin" \
-    PYTHONUNBUFFERED=1 \
-    TZ=America/Sao_Paulo
-
-# Install other tools as needed for the MCP server
-# Add non-root user and ability to change directory into /root
-RUN dnf install -y shadow-utils procps && \
+RUN dnf install -y shadow-utils && \
     dnf clean all && \
     groupadd --force --system app && \
     useradd app -g app -d /app && \
     chmod o+x /root
+
+# Final distroless stage — no package manager, no shell, minimal attack surface
+FROM gcr.io/distroless/python3-debian12
+
+# Copy user/group databases from user stage so USER app resolves by name
+COPY --from=user /etc/passwd /etc/passwd
+COPY --from=user /etc/group /etc/group
+COPY --from=user /etc/shadow /etc/shadow
 
 # Get the project from the uv layer
 COPY --from=uv --chown=app:app /root/.local /root/.local
@@ -78,10 +80,15 @@ COPY --from=uv --chown=app:app /app/.venv /app/.venv
 # Get healthcheck script
 COPY ./docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
 
+# Place executables in the environment at the front of the path
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    TZ=America/Sao_Paulo
+
 # Run as non-root
 USER app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 CMD ["docker-healthcheck.sh"]
-ENTRYPOINT ["awslabs.openapi-mcp-server"]
+HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 CMD ["/app/.venv/bin/python3", "/usr/local/bin/docker-healthcheck.sh"]
+ENTRYPOINT ["/app/.venv/bin/awslabs.openapi-mcp-server"]
