@@ -34,11 +34,11 @@ class HeadHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_server(status=200):
+def run_server(status=200, host='127.0.0.1'):
     """Start a local endpoint returning the requested status."""
     HeadHandler.status = status
     HeadHandler.requests = []
-    server = HTTPServer(('127.0.0.1', 0), HeadHandler)
+    server = HTTPServer((host, 0), HeadHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -78,8 +78,10 @@ def test_http_transport_rejects_404():
 
 def test_http_transport_rejects_unreachable_endpoint():
     """Treat connection errors as unhealthy."""
-    server, _thread = run_server()
+    server, thread = run_server()
     port = server.server_port
+    server.shutdown()
+    thread.join()
     server.server_close()
     assert not HEALTHCHECK.check_server(['--transport=sse', '--port', str(port)], {})
 
@@ -149,3 +151,39 @@ def test_sse_uses_sse_route_and_stdio_uses_process_liveness():
     with patch.object(HEALTHCHECK, 'process_is_running', return_value=True) as is_running:
         assert HEALTHCHECK.check_server(['--transport=stdio'], {'SERVER_TRANSPORT': 'http'})
     is_running.assert_called_once_with()
+
+
+def test_healthcheck_probes_configured_interface():
+    """Probe the actual CLI bind address, not an unrelated loopback address."""
+    server, thread = run_server(host='127.0.0.2')
+    try:
+        assert HEALTHCHECK.check_server(
+            ['--transport=http', '--host=127.0.0.2', '--port', str(server.server_port)],
+            {'SERVER_HOST': '127.0.0.1'},
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def test_healthcheck_never_uses_environment_proxy(monkeypatch):
+    """A proxy response must not make a closed local listener appear healthy."""
+    listener, listener_thread = run_server()
+    port = listener.server_port
+    listener.shutdown()
+    listener_thread.join()
+    listener.server_close()
+    proxy, proxy_thread = run_server()
+    monkeypatch.setenv('http_proxy', f'http://127.0.0.1:{proxy.server_port}')
+    monkeypatch.setenv('no_proxy', '')
+    monkeypatch.delenv('NO_PROXY', raising=False)
+    try:
+        probe = module_from_spec(SPEC)
+        LOADER.exec_module(probe)
+        assert not probe.check_server(['--transport=http', '--port', str(port)], {})
+        assert HeadHandler.requests == []
+    finally:
+        proxy.shutdown()
+        proxy_thread.join()
+        proxy.server_close()

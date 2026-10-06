@@ -18,7 +18,7 @@ import glob
 import os
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 class RejectRedirects(HTTPRedirectHandler):
@@ -29,7 +29,7 @@ class RejectRedirects(HTTPRedirectHandler):
         return None
 
 
-OPENER = build_opener(RejectRedirects)
+OPENER = build_opener(RejectRedirects, ProxyHandler({}))
 
 
 SERVER = 'awslabs.openapi-mcp-server'
@@ -98,7 +98,10 @@ def check_server(arguments, environment):
     if not path.startswith('/') or path.startswith('//') or '?' in path or '#' in path:
         return False
 
-    request = Request(f'http://127.0.0.1:{port}{path}', method='HEAD')
+    host = option_value(arguments, '--host', environment.get('SERVER_HOST', '127.0.0.1'))
+    host = {'0.0.0.0': '127.0.0.1', '::': '::1'}.get(host, host)
+    host = f'[{host}]' if ':' in host and not host.startswith('[') else host
+    request = Request(f'http://{host}:{port}{path}', method='HEAD')
     try:
         with OPENER.open(request, timeout=3) as response:
             return response.status in ACCEPTED_HTTP_STATUSES
