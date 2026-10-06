@@ -165,6 +165,128 @@ async def test_include_tags_filters_to_matching():
     assert 'createPet' in names
     assert 'getInventory' not in names
     assert 'listUsers' not in names
+    prompts = {prompt.name for prompt in await server.list_prompts()}
+    assert 'listPets' in prompts
+    assert 'getInventory' not in prompts
+    assert 'listUsers' not in prompts
+
+
+@pytest.mark.asyncio
+async def test_exclude_tags_filters_operation_prompts():
+    """Excluded operations do not leave their prompts visible."""
+    server = await _create_server(_base_config(exclude_tags='store,user'))
+    prompts = {prompt.name for prompt in await server.list_prompts()}
+    assert 'listPets' in prompts
+    assert 'getInventory' not in prompts
+    assert 'listUsers' not in prompts
+
+
+@pytest.mark.asyncio
+async def test_prompt_arguments_include_path_parameters_with_operation_override():
+    """Path-level parameters reach prompts; operation parameters override same name."""
+    from awslabs.openapi_mcp_server.prompts import MCPPromptManager
+    from fastmcp import FastMCP
+
+    spec = {
+        'paths': {
+            '/pets/{petId}': {
+                'parameters': [
+                    {
+                        'name': 'petId',
+                        'in': 'path',
+                        'required': True,
+                        'description': 'Path-level description',
+                    },
+                    {
+                        'name': 'locale',
+                        'in': 'query',
+                        'description': 'Locale',
+                    },
+                ],
+                'get': {
+                    'operationId': 'getPet',
+                    'parameters': [
+                        {
+                            'name': 'petId',
+                            'in': 'path',
+                            'required': True,
+                            'description': 'Operation override',
+                        }
+                    ],
+                    'responses': {'200': {'description': 'OK'}},
+                },
+            }
+        }
+    }
+    server = FastMCP()
+    await MCPPromptManager().generate_prompts(
+        server,
+        'pets',
+        spec,
+        route_classifications={('/pets/{petId}', 'GET'): 'resource_template'},
+    )
+    prompt = next(prompt for prompt in await server.list_prompts() if prompt.name == 'getPet')
+    arguments = {argument.name: argument for argument in prompt.arguments}
+    assert set(arguments) == {'petId', 'locale'}
+    assert arguments['petId'].description == 'Operation override'
+    assert arguments['locale'].description == 'Locale'
+
+
+def test_build_route_maps_handles_null_parameters_and_local_parameter_refs():
+    """Route classification tolerates null params and resolves local parameter refs."""
+    from awslabs.openapi_mcp_server.server import _build_route_maps
+    from fastmcp.server.providers.openapi import MCPType
+
+    spec = {
+        'paths': {
+            '/pets': {
+                'parameters': None,
+                'get': {'operationId': 'listPets', 'parameters': None},
+            },
+            '/pets/search': {
+                'get': {
+                    'operationId': 'searchPets',
+                    'parameters': [{'$ref': '#/components/parameters/Status'}],
+                },
+            },
+        },
+        'components': {
+            'parameters': {
+                'Status': {
+                    'name': 'status',
+                    'in': 'query',
+                    'schema': {'type': 'string'},
+                }
+            }
+        },
+    }
+
+    route_maps = _build_route_maps(spec)
+    assert [route_map.mcp_type for route_map in route_maps] == [
+        MCPType.RESOURCE,
+        MCPType.TOOL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_three_argument_prompt_generation_remains_supported():
+    """The public prompt manager retains its original three-argument call form."""
+    from awslabs.openapi_mcp_server.prompts import MCPPromptManager
+    from fastmcp import FastMCP
+
+    server = FastMCP()
+    spec = {
+        'paths': {
+            '/pets': {
+                'get': {
+                    'operationId': 'listPets',
+                    'responses': {'200': {'description': 'OK'}},
+                }
+            }
+        }
+    }
+    await MCPPromptManager().generate_prompts(server, 'pets', spec)
+    assert await server.list_prompts() == []
 
 
 @pytest.mark.asyncio
@@ -185,9 +307,11 @@ async def test_no_tag_filters_exposes_all():
     server = await _create_server(_base_config())
     tools = await server.list_tools()
     names = {t.name for t in tools}
+    resources = await server.list_resources()
+    resource_names = {resource.name for resource in resources}
     assert 'listPets' in names
-    assert 'getInventory' in names
     assert 'listUsers' in names
+    assert 'getInventory' in resource_names
 
 
 # --- Enriched descriptions ---
@@ -346,8 +470,8 @@ def test_config_defaults():
 async def test_enriched_descriptions_no_params():
     """Tool descriptions still enriched when operation has no parameters."""
     server = await _create_server(_base_config())
-    tools = await server.list_tools()
-    inventory = next(t for t in tools if t.name == 'getInventory')
+    resources = await server.list_resources()
+    inventory = next(resource for resource in resources if resource.name == 'getInventory')
     # Should have a Responses section even without params
     assert '**Responses:**' in inventory.description
 
@@ -375,7 +499,9 @@ async def test_additional_specs_empty_array():
     """Empty additional_specs array is handled gracefully."""
     server = await _create_server(_base_config(additional_specs='[]'))
     tools = await server.list_tools()
-    assert len(tools) == 4  # Only primary spec tools
+    resources = await server.list_resources()
+    assert len(tools) == 3
+    assert {resource.name for resource in resources} == {'getInventory'}
 
 
 @pytest.mark.asyncio
@@ -562,12 +688,12 @@ async def test_enriched_descriptions_empty_original():
         },
     }
     server = await _create_server(_base_config(), spec=spec_no_desc)
-    tools = await server.list_tools()
-    item_tool = next((t for t in tools if t.name == 'listItems'), None)
-    assert item_tool is not None
+    resources = await server.list_resources()
+    item_resource = next((resource for resource in resources if resource.name == 'listItems'), None)
+    assert item_resource is not None
     # Should still have enrichment even without original description
-    assert item_tool.description
-    assert '**Responses:**' in item_tool.description
+    assert item_resource.description
+    assert '**Responses:**' in item_resource.description
 
 
 @pytest.mark.asyncio

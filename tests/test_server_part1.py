@@ -22,21 +22,21 @@ from unittest.mock import MagicMock, patch
 @pytest.fixture
 def mock_config():
     """Create a mock configuration for testing."""
-    config = MagicMock(spec=Config)
-    config.api_name = 'test-api'
-    config.api_spec_url = 'https://example.com/openapi.json'
-    config.api_spec_path = None
-    config.api_base_url = 'https://example.com/api'
-    config.auth_type = 'none'
-    config.auth_username = None
-    config.auth_password = None
-    config.auth_token = None
-    config.auth_api_key = None
-    config.auth_api_key_name = 'api_key'
-    config.auth_api_key_in = 'header'
-    config.version = '1.0.0'
-    config.transport = 'stdio'
-    return config
+    return Config(
+        api_name='test-api',
+        api_spec_url='https://example.com/openapi.json',
+        api_spec_path=None,
+        api_base_url='https://example.com/api',
+        auth_type='none',
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_api_key=None,
+        auth_api_key_name='api_key',
+        auth_api_key_in='header',
+        version='1.0.0',
+        transport='stdio',
+    )
 
 
 # NOTE: ``test_create_mcp_server_basic`` and ``test_create_mcp_server_invalid_spec``

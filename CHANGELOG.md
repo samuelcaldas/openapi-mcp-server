@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spec URL loading is DNS-pinned end to end; the previous README note about deploying behind an egress proxy for "full DNS pinning" no longer applies.
 - **BREAKING (edge case)**: OpenAPI specs containing external `$ref`s — remote `http(s)://`/`file://` references, or relative multi-file references like `schemas.yaml#/Pet` — are now refused. Specs using only internal (`#/components/...`) references are unaffected. Bundle multi-file specs into a single document before loading.
 
+## [1.2.0] - 2026-10-06
+
+### Added
+- Streamable HTTP and legacy SSE transports alongside the default `stdio` transport; network endpoints are `/mcp` and `/sse`.
+- Explicit remote-bind opt-in, loopback-by-default host/origin protections, and guidance for securing unauthenticated inbound MCP connections.
+
+### Changed
+- Upgraded to FastMCP 4, MCP SDK 2, and httpx2; retained outbound authentication, SSRF protections, and OpenAPI route behavior.
+
+### Security
+- Inbound MCP transport access remains unauthenticated; API credentials authenticate outbound API requests only. Remote deployment requires an operator-managed authenticated gateway.
+
 ## [1.1.0] - 2026-05-31
 
 ### Added

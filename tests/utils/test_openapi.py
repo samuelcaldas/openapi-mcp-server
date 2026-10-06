@@ -14,7 +14,7 @@
 """Tests for the OpenAPI utilities using direct module patching."""
 
 # Import modules we need to mock
-import httpx
+import httpx2
 import json
 import pytest
 from unittest.mock import MagicMock, mock_open, patch
@@ -68,10 +68,10 @@ class TestOpenAPIUtils:
     def test_url_http_error(self, mock_resolve, mock_fetch, mock_sleep):
         """Test HTTP error handling on the DNS-pinned fetch path."""
         # The pinned fetch raises HTTPError; validation resolves to a public IP.
-        mock_fetch.side_effect = httpx.HTTPError('HTTP Error')
+        mock_fetch.side_effect = httpx2.HTTPError('HTTP Error')
 
         # Test the exception is propagated correctly
-        with pytest.raises(httpx.HTTPError, match='HTTP Error'):
+        with pytest.raises(httpx2.HTTPError, match='HTTP Error'):
             load_openapi_spec(url='https://example.com/api.json')
 
     @patch('awslabs.openapi_mcp_server.utils.openapi.time.sleep')
@@ -83,10 +83,10 @@ class TestOpenAPIUtils:
     def test_url_timeout(self, mock_resolve, mock_fetch, mock_sleep):
         """Test timeout exception handling on the DNS-pinned fetch path."""
         # Setup the mock to raise TimeoutException
-        mock_fetch.side_effect = httpx.TimeoutException('Timeout Error')
+        mock_fetch.side_effect = httpx2.TimeoutException('Timeout Error')
 
         # Test the exception is propagated correctly
-        with pytest.raises(httpx.TimeoutException, match='Timeout Error'):
+        with pytest.raises(httpx2.TimeoutException, match='Timeout Error'):
             load_openapi_spec(url='https://example.com/api.json')
 
     @patch('awslabs.openapi_mcp_server.utils.openapi._pinned_fetch')

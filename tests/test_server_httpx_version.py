@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the server module's httpx version handling."""
+"""Tests for the server module's httpx2 version handling."""
 
 import pytest
 from awslabs.openapi_mcp_server.api.config import Config
@@ -22,21 +22,21 @@ from unittest.mock import MagicMock, PropertyMock, patch
 @pytest.fixture
 def mock_config():
     """Create a mock configuration for testing."""
-    config = MagicMock(spec=Config)
-    config.api_name = 'test-api'
-    config.api_spec_url = 'https://example.com/openapi.json'
-    config.api_spec_path = None
-    config.api_base_url = 'https://example.com/api'
-    config.auth_type = 'none'
-    config.auth_username = None
-    config.auth_password = None
-    config.auth_token = None
-    config.auth_api_key = None
-    config.auth_api_key_name = 'api_key'
-    config.auth_api_key_in = 'header'
-    config.version = '1.0.0'
-    config.transport = 'stdio'
-    return config
+    return Config(
+        api_name='test-api',
+        api_spec_url='https://example.com/openapi.json',
+        api_spec_path=None,
+        api_base_url='https://example.com/api',
+        auth_type='none',
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_api_key=None,
+        auth_api_key_name='api_key',
+        auth_api_key_in='header',
+        version='1.0.0',
+        transport='stdio',
+    )
 
 
 @patch('awslabs.openapi_mcp_server.server.OpenAPIProvider')
@@ -45,7 +45,7 @@ def mock_config():
 @patch('awslabs.openapi_mcp_server.server.validate_openapi_spec', return_value=True)
 @patch('awslabs.openapi_mcp_server.server.HttpClientFactory.create_client')
 @patch('awslabs.openapi_mcp_server.server.logger')
-@patch('awslabs.openapi_mcp_server.server.httpx')
+@patch('awslabs.openapi_mcp_server.server.httpx2')
 def test_create_mcp_server_httpx_version_error(
     mock_httpx,
     mock_logger,
@@ -56,7 +56,7 @@ def test_create_mcp_server_httpx_version_error(
     mock_openapi_provider,
     mock_config,
 ):
-    """Test handling of missing httpx.__version__ attribute."""
+    """Test handling of missing httpx2.__version__ attribute."""
     # Setup mocks
     mock_server = MagicMock()
     mock_fastmcp.from_openapi.return_value = mock_server

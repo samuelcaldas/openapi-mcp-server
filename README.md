@@ -6,7 +6,7 @@ This project is a server that dynamically creates Model Context Protocol (MCP) t
 
 This is an independently maintained fork of the [`awslabs/mcp` OpenAPI MCP Server](https://github.com/awslabs/mcp/tree/main/src/openapi-mcp-server). The implementation, AWS copyright notices, `LICENSE`, and `NOTICE` are retained in accordance with the Apache License 2.0. The fork is maintained at [`samuelcaldas/openapi-mcp-server`](https://github.com/samuelcaldas/openapi-mcp-server), while AWS remains the credited upstream origin.
 
-The project currently exposes the `stdio` transport only. SSE and Streamable HTTP are intentionally out of scope for this initial fork. Future transport work will follow the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and protocol specifications.
+The server defaults to `stdio` for local MCP clients and also supports Streamable HTTP (`/mcp`) and legacy SSE (`/sse`). Network transports are unauthenticated at the MCP layer: keep the default loopback bind, or place remote deployments behind an operator-managed, authenticated gateway.
 
 Upstream synchronization is deliberately manual. Run `./scripts/sync-upstream.sh` from a clean `main` checkout after installing `git-filter-repo`, or dispatch the [Sync upstream workflow](https://github.com/samuelcaldas/openapi-mcp-server/actions/workflows/sync-upstream.yml) on `main`. The script keeps the filtered AWS history under `refs/remotes/upstream/main`, creates `chore(sync): update from awslabs/mcp` only when the merge changes the tree, and aborts on conflicts.
 
@@ -34,7 +34,7 @@ Upstream synchronization is deliberately manual. Run `./scripts/sync-upstream.sh
     - Follows MCP-compliant structure with name, description, arguments, and metadata
     - Achieves 70-75% reduction in token usage while maintaining functionality
     - Uses concise descriptions with essential information for better developer experience
-- **Transport**: Supports the `stdio` transport in this release; network transports are not enabled yet
+- **Transport**: `stdio` by default; Streamable HTTP (`--transport http` or `--transport streamable-http`) at `/mcp`; legacy SSE (`--transport sse`) at `/sse`
 - **Flexible Configuration**: Configure via environment variables or command line arguments
 - **OpenAPI Support**: Works with OpenAPI 3.x specifications in JSON or YAML format
 - **OpenAPI Specification Validation**: Validates specifications without failing startup if issues detected, logging warnings instead to work with specs having minor issues or non-standard extensions
@@ -136,7 +136,7 @@ For Windows users, the MCP server configuration format is slightly different:
           "ENABLE_OPERATION_PROMPTS": "true",
           "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": "5.0",
           "UVICORN_GRACEFUL_SHUTDOWN": "true"
-      },
+      }
     }
   }
 }
@@ -157,6 +157,20 @@ awslabs.openapi-mcp-server --api-name petstore --api-url https://petstore3.swagg
 # Use a different API
 awslabs.openapi-mcp-server --api-name myapi --api-url https://api.example.com --spec-url https://api.example.com/openapi.json
 ```
+
+### Network Transports
+
+`stdio` is the default. Use Streamable HTTP (`/mcp`) or legacy SSE (`/sse`) when an MCP client needs a network endpoint:
+
+```bash
+# Streamable HTTP on loopback; HTTP path defaults to /mcp
+awslabs.openapi-mcp-server --transport http --host 127.0.0.1 --port 8000 --api-url https://api.example.com --spec-url https://api.example.com/openapi.json
+
+# Remote bind only behind an operator-managed authenticated gateway
+awslabs.openapi-mcp-server --transport streamable-http --host 0.0.0.0 --port 8000 --http-path /mcp --allow-remote-bind --allowed-origins https://mcp.example.com --api-url https://api.example.com --spec-url https://api.example.com/openapi.json
+```
+
+Remote bind does not add inbound MCP authentication. Protect the endpoint with an authenticated gateway; `--allowed-origins` accepts exact HTTP(S) origins, not paths or wildcards. Host and Origin checks remain enabled, including for remote binds. Use `--http-path` to select the Streamable HTTP endpoint. SSE is retained for compatibility and uses `/sse`.
 
 ### Authenticated API
 
@@ -258,9 +272,12 @@ uvx --refresh --from . awslabs.openapi-mcp-server --api-url https://petstore3.sw
 export SERVER_NAME="My API Server"
 export SERVER_DEBUG=true
 export SERVER_MESSAGE_TIMEOUT=60
-export SERVER_HOST="0.0.0.0"
+export SERVER_HOST="127.0.0.1"  # Default loopback bind; non-loopback needs ALLOW_REMOTE_BIND
 export SERVER_PORT=8000
-export SERVER_TRANSPORT="stdio"  # Option: stdio
+export SERVER_TRANSPORT="stdio"  # Options: stdio, http, streamable-http, sse
+export SERVER_HTTP_PATH="/mcp"  # Streamable HTTP endpoint; SSE uses /sse
+export ALLOW_REMOTE_BIND="false"  # Set true only behind an authenticated secure gateway
+export ALLOWED_ORIGINS=""  # Comma-separated exact http(s) origins trusted for browser/proxy requests
 export LOG_LEVEL="INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 # Metrics and monitoring configuration
@@ -310,7 +327,7 @@ export ALLOWED_SPEC_DIRS="/app/specs:/data/api"  # OS path-separated list of all
 The OpenAPI MCP Server includes comprehensive documentation to help you get started and make the most of its features:
 
 - [**AUTHENTICATION.md**](AUTHENTICATION.md): Detailed information about authentication methods, configuration options, and troubleshooting
-- [**DEPLOYMENT.md**](DEPLOYMENT.md): Guidelines for deploying the stdio server in Docker and AWS environments
+- [**DEPLOYMENT.md**](DEPLOYMENT.md): Guidelines for deploying local stdio and network transports in Docker and AWS environments
 - [**AWS_BEST_PRACTICES.md**](AWS_BEST_PRACTICES.md): AWS best practices implemented in the server for resilience, caching, and efficiency
 - [**OBSERVABILITY.md**](OBSERVABILITY.md): Information about metrics, logging, and monitoring capabilities
 - [**tests/README.md**](tests/README.md): Overview of the test structure and strategy
@@ -361,23 +378,21 @@ The project includes a Dockerfile for containerized deployment. To build and run
 # Build the Docker image
 docker build -t openapi-mcp-server:latest .
 
-# Run with default settings
-docker run -p 8000:8000 openapi-mcp-server:latest
-
-# Run with custom configuration
-docker run -p 8000:8000 \
-  -e API_NAME=myapi \
-  -e API_BASE_URL=https://api.example.com \
-  -e API_SPEC_URL=https://api.example.com/openapi.json \
-  -e SERVER_TRANSPORT=stdio \
-  -e ENABLE_PROMETHEUS=false \
-  -e ENABLE_OPERATION_PROMPTS=true \
-  -e UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN=5.0 \
-  -e UVICORN_GRACEFUL_SHUTDOWN=true \
+# Run Streamable HTTP behind an operator-managed secure gateway
+docker run -p 127.0.0.1:8000:8000 \
+  -e API_NAME=petstore \
+  -e API_BASE_URL=https://petstore3.swagger.io/api/v3 \
+  -e API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json \
+  -e SERVER_TRANSPORT=http \
+  -e SERVER_HOST=0.0.0.0 \
+  -e SERVER_PORT=8000 \
+  -e ALLOW_REMOTE_BIND=true \
+  -e ALLOWED_ORIGINS=https://mcp.example.com \
+  -e TZ=America/Sao_Paulo \
   openapi-mcp-server:latest
 ```
 
-For detailed information about Docker deployment and AWS service integration, see [DEPLOYMENT.md](DEPLOYMENT.md). This guide does not advertise SSE or Streamable HTTP because neither transport is implemented in this fork.
+The default `stdio` transport needs no published port. The Docker example binds to host loopback so a same-host authenticated gateway can proxy it without exposing the unauthenticated endpoint externally. If the gateway runs on another host, use a separate trusted container network or firewall that allows only the gateway to reach the server; never publish the port to untrusted networks. Remote network transports have no inbound MCP authentication. See [DEPLOYMENT.md](DEPLOYMENT.md) for transport configuration and security requirements.
 
 ## Testing
 
@@ -424,12 +439,9 @@ This server acts as a bridge between OpenAPI specifications and LLMs, allowing m
 
 ### Getting Started
 
-1. Point the server to your API by providing:
-   - API name
-   - API base URL
-   - OpenAPI specification URL or local file path
-2. Set up appropriate authentication if your API requires it
-3. Configure the stdio transport option
+1. Point the server to your API by providing its name, base URL, and OpenAPI specification URL or local file path.
+2. Configure outbound API authentication if required; it does not authenticate inbound MCP clients.
+3. Use the default `stdio` transport for local MCP clients, or configure a network transport and secure gateway as described above.
 
 ### Monitoring and Metrics
 

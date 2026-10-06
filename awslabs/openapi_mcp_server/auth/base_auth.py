@@ -14,7 +14,7 @@
 """Base authentication provider."""
 
 import functools
-import httpx
+import httpx2
 from abc import ABC, abstractmethod
 from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.api.config import Config
@@ -141,7 +141,7 @@ class BaseAuthProvider(AuthProvider, ABC):
                 return_type = method.__annotations__.get('return')
                 if return_type == Dict[str, str]:
                     return cast(T, {})
-                elif return_type == Optional[httpx.Auth]:
+                elif return_type == Optional[httpx2.Auth]:
                     return cast(T, None)
                 return cast(T, None)
             return method(self, *args, **kwargs)
@@ -179,11 +179,11 @@ class BaseAuthProvider(AuthProvider, ABC):
         return self._auth_cookies
 
     @_requires_valid_config
-    def get_httpx_auth(self) -> Optional[httpx.Auth]:
+    def get_httpx_auth(self) -> Optional[httpx2.Auth]:
         """Get authentication object for HTTPX.
 
         Returns:
-            Optional[httpx.Auth]: Authentication object for HTTPX client
+            Optional[httpx2.Auth]: Authentication object for HTTPX client
 
         """
         return None

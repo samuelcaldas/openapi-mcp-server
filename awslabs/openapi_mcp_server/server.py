@@ -15,7 +15,7 @@
 
 import argparse
 import asyncio
-import httpx
+import httpx2
 import os
 import re
 import signal
@@ -25,12 +25,24 @@ import sys
 from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.api.config import Config, load_config
 from awslabs.openapi_mcp_server.prompts import MCPPromptManager
+from awslabs.openapi_mcp_server.transport import (
+    is_remote_binding,
+    run_transport,
+    validate_transport_config,
+)
 from awslabs.openapi_mcp_server.utils.http_client import HttpClientFactory, make_request_with_retry
 from awslabs.openapi_mcp_server.utils.metrics_provider import metrics
 from awslabs.openapi_mcp_server.utils.openapi import load_openapi_spec
 from awslabs.openapi_mcp_server.utils.openapi_validator import validate_openapi_spec
 from fastmcp import FastMCP
-from fastmcp.server.providers.openapi import MCPType, OpenAPIProvider, RouteMap
+from fastmcp.server.providers.openapi import (
+    MCPType,
+    OpenAPIProvider,
+    OpenAPIResource,
+    OpenAPIResourceTemplate,
+    OpenAPITool,
+    RouteMap,
+)
 from fastmcp.utilities.openapi import format_description_with_responses
 from typing import Any, Dict
 
@@ -38,8 +50,27 @@ from typing import Any, Dict
 _HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'options', 'head', 'trace'}
 
 
+def _get_parameters(spec: Dict[str, Any], *parameter_sets: Any) -> list:
+    """Return inline parameters and resolvable local component parameter refs."""
+    components = spec.get('components', {}).get('parameters', {})
+    parameters = []
+    for parameter_set in parameter_sets:
+        if not isinstance(parameter_set, list):
+            continue
+        for parameter in parameter_set:
+            if not isinstance(parameter, dict):
+                continue
+            reference = parameter.get('$ref', '')
+            if reference.startswith('#/components/parameters/') and isinstance(components, dict):
+                name = reference.removeprefix('#/components/parameters/')
+                name = name.replace('~1', '/').replace('~0', '~')
+                parameter = components.get(name, parameter)
+            parameters.append(parameter)
+    return parameters
+
+
 def _build_route_maps(spec: Dict[str, Any]) -> list:
-    """Build route maps for GET operations with query parameters."""
+    """Map GET routes to resources, templates, or tools."""
     mappings = []
     for path, path_item in spec.get('paths', {}).items():
         if not isinstance(path_item, dict):
@@ -47,20 +78,73 @@ def _build_route_maps(spec: Dict[str, Any]) -> list:
         for method, operation in path_item.items():
             if method.lower() not in _HTTP_METHODS or not isinstance(operation, dict):
                 continue
-            if method.lower() == 'get':
-                parameters = operation.get('parameters', [])
-                query_params = [
-                    p for p in parameters if isinstance(p, dict) and p.get('in') == 'query'
-                ]
-                if query_params:
-                    mappings.append(
-                        RouteMap(
-                            methods=['GET'],
-                            pattern=f'^{re.escape(path)}$',
-                            mcp_type=MCPType.TOOL,
-                        )
-                    )
+            if method.lower() != 'get':
+                continue
+
+            parameters = _get_parameters(
+                spec, path_item.get('parameters'), operation.get('parameters')
+            )
+            has_query_parameters = any(parameter.get('in') == 'query' for parameter in parameters)
+            has_path_parameters = bool(re.search(r'{[^{}]+}', path))
+            if has_query_parameters:
+                mcp_type = MCPType.TOOL
+            elif has_path_parameters:
+                mcp_type = MCPType.RESOURCE_TEMPLATE
+            else:
+                mcp_type = MCPType.RESOURCE
+
+            mappings.append(
+                RouteMap(
+                    methods=['GET'],
+                    pattern=f'^{re.escape(path)}$',
+                    mcp_type=mcp_type,
+                )
+            )
     return mappings
+
+
+def _enrich_component(route: Any, component: Any) -> None:
+    """Add OpenAPI response and parameter details to a generated component."""
+    component.description = format_description_with_responses(
+        component.description or '',
+        route.responses if getattr(route, 'responses', None) else {},
+        getattr(route, 'parameters', None),
+        getattr(route, 'request_body', None),
+    )
+
+
+def _create_component_callback(
+    route_classifications: Dict[tuple[str, str], str] | None = None,
+    resource_uris: Dict[tuple[str, str], str] | None = None,
+):
+    """Enrich generated components and optionally record their mapped route types."""
+
+    def classify_component(route: Any, component: Any) -> None:
+        _enrich_component(route, component)
+        if route_classifications is None and resource_uris is None:
+            return
+
+        route_key = (route.path, route.method.upper())
+        component_type = _get_component_type(component)
+        if component_type is not None and route_classifications is not None:
+            route_classifications[route_key] = component_type
+        if resource_uris is not None and component_type in {'resource', 'resource_template'}:
+            resource_uris[route_key] = str(
+                getattr(component, 'uri_template', getattr(component, 'uri', ''))
+            )
+
+    return classify_component
+
+
+def _get_component_type(component: Any) -> str | None:
+    """Return the MCP category for a public FastMCP OpenAPI component."""
+    if isinstance(component, OpenAPITool):
+        return 'tool'
+    if isinstance(component, OpenAPIResourceTemplate):
+        return 'resource_template'
+    if isinstance(component, OpenAPIResource):
+        return 'resource'
+    return None
 
 
 async def create_mcp_server_async(config: Config) -> FastMCP:
@@ -73,11 +157,13 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         FastMCP: The configured FastMCP server
 
     """
+    validate_transport_config(config)
+
     # Log environment information
     logger.debug('Environment information:')
     logger.debug(f'Python version: {sys.version}')
     try:
-        logger.debug(f'HTTPX version: {httpx.__version__}')
+        logger.debug(f'HTTPX version: {httpx2.__version__}')
     except AttributeError:
         logger.debug('HTTPX version: unknown')
 
@@ -226,22 +312,11 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         if exclude_tags:
             logger.info(f'Excluding operations with tags: {exclude_tags}')
 
-        def enrich_component(route: Any, component: Any) -> None:
-            """Enrich MCP tool/resource descriptions with OpenAPI spec details.
-
-            POC migration: this delegates to FastMCP's own shipped formatter
-            (`fastmcp.utilities.openapi.format_description_with_responses`)
-            instead of the previous bespoke string-building. The upstream
-            formatter emits richer, structured sections (Path/Query Parameters,
-            Request Body, Responses with examples) than the old
-            ``desc | Returns: ... | Example: ...`` format.
-            """
-            component.description = format_description_with_responses(
-                component.description or '',
-                route.responses if getattr(route, 'responses', None) else {},
-                getattr(route, 'parameters', None),
-                getattr(route, 'request_body', None),
-            )
+        primary_route_classifications: Dict[tuple[str, str], str] = {}
+        primary_resource_uris: Dict[tuple[str, str], str] = {}
+        primary_component_callback = _create_component_callback(
+            primary_route_classifications, primary_resource_uris
+        )
 
         # POC migration: build the primary server via the native high-level
         # ``FastMCP.from_openapi(...)`` entry point instead of hand-constructing
@@ -257,7 +332,7 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
             name=config.api_name or 'OpenAPI MCP Server',
             instructions='This server acts as a bridge between OpenAPI specifications and LLMs, allowing models to have a better understanding of available API capabilities without requiring manual tool definitions.',
             route_maps=custom_mappings,
-            mcp_component_fn=enrich_component,
+            mcp_component_fn=primary_component_callback,
             validate_output=config.validate_output,
         )
 
@@ -388,7 +463,7 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
                         username = entry.get('auth_username', '')
                         password = entry.get('auth_password', '')
                         if username and password:
-                            extra_auth = httpx.BasicAuth(username, password)
+                            extra_auth = httpx2.BasicAuth(username, password)
                     elif entry_auth_type != 'none':
                         logger.warning(
                             f'Additional spec {extra_name}: unrecognized auth_type '
@@ -407,7 +482,7 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
                             openapi_spec=extra_spec,
                             client=extra_client,
                             route_maps=_build_route_maps(extra_spec),
-                            mcp_component_fn=enrich_component,
+                            mcp_component_fn=_create_component_callback(),
                             validate_output=config.validate_output,
                         )
                     )
@@ -436,7 +511,13 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
             prompt_manager = MCPPromptManager()
 
             # Generate prompts
-            await prompt_manager.generate_prompts(server, config.api_name, openapi_spec)
+            await prompt_manager.generate_prompts(
+                server,
+                config.api_name,
+                openapi_spec,
+                route_classifications=primary_route_classifications,
+                resource_uris=primary_resource_uris,
+            )
 
             # Register resource handler
             prompt_manager.register_api_resource_handler(server, config.api_name, client)
@@ -577,41 +658,20 @@ async def get_all_counts(server: FastMCP) -> tuple[int, int, int, int]:
     return len(prompts), len(tools), len(resources), len(resource_templates)
 
 
-def setup_signal_handlers():
-    """Set up signal handlers for graceful shutdown."""
-    # Store original SIGINT handler
-    original_sigint = signal.getsignal(signal.SIGINT)
+def setup_signal_handlers(stop_event=None):
+    """Log final metrics and stop stdio reads or exit on SIGINT/SIGTERM."""
 
     def signal_handler(sig, frame):
-        """Handle signals by logging metrics then chain to original handler."""
         logger.debug(f'Received signal {sig}, shutting down gracefully...')
-
-        # Log final metrics
         summary = metrics.get_summary()
         logger.info(f'Final metrics: {summary}')
+        logger.info('Process Interrupted, Shutting down gracefully...')
+        if stop_event is not None:
+            stop_event.set()
+            return
+        sys.exit(0)
 
-        # if sig is signal.SIGINT handle gracefully
-        if sig == signal.SIGINT:
-            logger.info('Process Interrupted, Shutting down gracefully...')
-            sys.exit(0)
-
-        # For SIGINT, chain to the original handler
-        if (
-            sig == signal.SIGINT
-            and original_sigint != signal.SIG_DFL
-            and original_sigint != signal.SIG_IGN
-        ):
-            # Call the original handler
-            if callable(original_sigint):
-                original_sigint(sig, frame)
-
-        # For other signals or if no original handler, just return
-        # This lets the default handling take over
-
-    # Register for SIGTERM only
     signal.signal(signal.SIGTERM, signal_handler)
-
-    # For SIGINT, we'll use a special handler that logs then chains to original
     signal.signal(signal.SIGINT, signal_handler)
 
 
@@ -628,6 +688,24 @@ def main():
         help='Set logging level',
     )
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument(
+        '--transport',
+        choices=['stdio', 'http', 'streamable-http', 'sse'],
+        help='MCP transport (default: stdio)',
+    )
+    parser.add_argument('--host', help='Network transport bind host (default: 127.0.0.1)')
+    parser.add_argument('--port', type=int, help='Network transport port (default: 8000)')
+    parser.add_argument('--http-path', help='Streamable HTTP endpoint path (default: /mcp)')
+    parser.add_argument(
+        '--allow-remote-bind',
+        action='store_true',
+        default=None,
+        help='Allow binding beyond loopback',
+    )
+    parser.add_argument(
+        '--allowed-origins',
+        help='Comma-separated exact HTTP(S) origins allowed by network transports',
+    )
 
     # API configuration
     parser.add_argument('--api-name', help='Name of the API (default: petstore)')
@@ -729,12 +807,14 @@ def main():
     config = load_config(args)
     logger.debug(f'Configuration loaded: api_name={config.api_name}, transport={config.transport}')
 
+    # Validate transports before spec loading, network access, or authentication setup.
+    validate_transport_config(config)
+    if is_remote_binding(config):
+        logger.warning('Remote MCP binding has no inbound authentication configured')
+
     # Create and run the MCP server
     logger.info('Creating MCP server')
     mcp_server = create_mcp_server(config)
-
-    # Set up signal handlers
-    setup_signal_handlers()
 
     try:
         # Get counts of prompts, tools, resources, and resource templates
@@ -760,9 +840,18 @@ def main():
         logger.error(f'Traceback: {traceback.format_exc()}')
         sys.exit(1)
 
-    # Run server with stdio transport only
-    logger.info('Running server with stdio transport')
-    mcp_server.run()
+    logger.info(f'Running server with {config.transport} transport')
+    if config.transport == 'stdio' and os.name == 'posix':
+        import threading
+        from awslabs.openapi_mcp_server.stdio import interruptible_stdin
+
+        stop_event = threading.Event()
+        setup_signal_handlers(stop_event=stop_event)
+        with interruptible_stdin(stop_event):
+            run_transport(mcp_server, config)
+        return
+    setup_signal_handlers()
+    run_transport(mcp_server, config)
 
 
 if __name__ == '__main__':

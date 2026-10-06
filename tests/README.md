@@ -84,7 +84,7 @@ Some tests can be influenced by environment variables:
 
 The tests use mocking to isolate components:
 
-- External HTTP requests are mocked using `httpx` mocks
+- External HTTP requests are mocked using `httpx2` mocks
 - File operations are mocked using `mock_open`
 - Environment variables are temporarily set and restored
 - Async functions are tested using `pytest.mark.asyncio` and `AsyncMock`

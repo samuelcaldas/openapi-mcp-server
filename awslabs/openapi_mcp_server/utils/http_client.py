@@ -18,7 +18,7 @@ and other improvements. It can use different backends based on configuration.
 """
 
 import asyncio
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.utils.config import (
     HTTP_MAX_CONNECTIONS,
@@ -49,13 +49,13 @@ class HttpClientFactory:
     def create_client(
         base_url: str,
         headers: Optional[Dict[str, str]] = None,
-        auth: Optional[httpx.Auth] = None,
+        auth: Optional[httpx2.Auth] = None,
         cookies: Optional[Dict[str, str]] = None,
-        timeout: Union[float, httpx.Timeout] = 30.0,
+        timeout: Union[float, httpx2.Timeout] = 30.0,
         follow_redirects: bool = True,
         max_connections: Optional[int] = None,
         max_keepalive: Optional[int] = None,
-    ) -> httpx.AsyncClient:
+    ) -> httpx2.AsyncClient:
         """Create an HTTP client with enhanced functionality.
 
         Args:
@@ -69,7 +69,7 @@ class HttpClientFactory:
             max_keepalive: Maximum number of keepalive connections (defaults to config value)
 
         Returns:
-            httpx.AsyncClient: The HTTP client
+            httpx2.AsyncClient: The HTTP client
 
         """
         # Use configuration values if not explicitly provided
@@ -135,14 +135,14 @@ class HttpClientFactory:
             logger.debug(f'Creating client with headers: {safe_headers}')
 
         # Create client with connection pooling
-        client = httpx.AsyncClient(
+        client = httpx2.AsyncClient(
             base_url=base_url,
             headers=headers,
             auth=auth,
             cookies=cookies,
-            timeout=timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout),
+            timeout=timeout if isinstance(timeout, httpx2.Timeout) else httpx2.Timeout(timeout),
             follow_redirects=follow_redirects,
-            limits=httpx.Limits(
+            limits=httpx2.Limits(
                 max_connections=max_connections,
                 max_keepalive_connections=max_keepalive,
             ),
@@ -163,13 +163,13 @@ class HttpClientFactory:
 
 
 async def make_request_with_retry(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     method: str,
     url: str,
     max_retries: int = 3,
     retry_delay: float = 1.0,
     **kwargs: Any,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Make an HTTP request with retry logic.
 
     Args:
@@ -181,10 +181,10 @@ async def make_request_with_retry(
         **kwargs: Additional arguments to pass to the request
 
     Returns:
-        httpx.Response: The HTTP response
+        httpx2.Response: The HTTP response
 
     Raises:
-        httpx.HTTPError: If the request fails after all retries
+        httpx2.HTTPError: If the request fails after all retries
 
     """
     # Use tenacity if available and enabled
@@ -195,7 +195,7 @@ async def make_request_with_retry(
             wait=tenacity.wait_exponential(
                 multiplier=retry_delay, min=retry_delay, max=retry_delay * 10
             ),
-            retry=tenacity.retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+            retry=tenacity.retry_if_exception_type((httpx2.TimeoutException, httpx2.ConnectError)),
             before_sleep=lambda retry_state: logger.warning(
                 f'Request failed, retrying ({retry_state.attempt_number}/{max_retries}): {retry_state.outcome.exception() if retry_state.outcome else "Unknown error"}'
             ),
@@ -216,7 +216,7 @@ async def make_request_with_retry(
                 response = await client.request(method, url, **kwargs)
                 response.raise_for_status()
                 return response
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
+            except (httpx2.TimeoutException, httpx2.ConnectError) as e:
                 if attempt < max_retries - 1:
                     delay = retry_delay * (2**attempt)  # Exponential backoff
                     logger.warning(f'Request failed, retrying ({attempt + 1}/{max_retries}): {e}')
@@ -224,7 +224,7 @@ async def make_request_with_retry(
                 else:
                     logger.error(f'Request failed after {max_retries} attempts: {e}')
                     raise
-            except httpx.HTTPStatusError as e:
+            except httpx2.HTTPStatusError as e:
                 # Don't retry on status errors (4xx, 5xx)
                 logger.error(f'Request failed with status {e.response.status_code}: {e}')
                 raise
@@ -238,11 +238,11 @@ async def make_request_with_retry(
 # Simple function for making a single request without retries
 @api_call_timer
 async def make_request(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     method: str,
     url: str,
     **kwargs: Any,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Make an HTTP request without retry logic.
 
     Args:
@@ -252,10 +252,10 @@ async def make_request(
         **kwargs: Additional arguments to pass to the request
 
     Returns:
-        httpx.Response: The HTTP response
+        httpx2.Response: The HTTP response
 
     Raises:
-        httpx.HTTPError: If the request fails
+        httpx2.HTTPError: If the request fails
 
     """
     response = await client.request(method, url, **kwargs)

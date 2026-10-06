@@ -15,7 +15,7 @@
 
 import os
 from awslabs.openapi_mcp_server import get_caller_info, logger
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -53,7 +53,10 @@ class Config:
     host: str = '127.0.0.1'
     port: int = 8000
     debug: bool = False
-    transport: str = 'stdio'  # stdio only
+    transport: str = 'stdio'
+    http_path: str = '/mcp'
+    allow_remote_bind: bool = False
+    allowed_origins: list[str] = field(default_factory=list)
     message_timeout: int = 60
     version: str = ''
 
@@ -129,6 +132,17 @@ def load_config(args: Any = None) -> Config:
         'SERVER_PORT': (lambda v: setattr(config, 'port', int(v))),
         'SERVER_DEBUG': (lambda v: setattr(config, 'debug', v.lower() == 'true')),
         'SERVER_TRANSPORT': (lambda v: setattr(config, 'transport', v)),
+        'SERVER_HTTP_PATH': (lambda v: setattr(config, 'http_path', v)),
+        'ALLOW_REMOTE_BIND': (
+            lambda v: setattr(config, 'allow_remote_bind', v.lower() in ('true', '1', 'yes'))
+        ),
+        'ALLOWED_ORIGINS': (
+            lambda v: setattr(
+                config,
+                'allowed_origins',
+                [origin.strip() for origin in v.split(',') if origin.strip()],
+            )
+        ),
         'SERVER_MESSAGE_TIMEOUT': (lambda v: setattr(config, 'message_timeout', int(v))),
         # Tag filtering
         'INCLUDE_TAGS': (lambda v: setattr(config, 'include_tags', v)),
@@ -162,6 +176,7 @@ def load_config(args: Any = None) -> Config:
 
     # Load from arguments
     if args:
+        arg_values = vars(args)
         if hasattr(args, 'api_name') and args.api_name:
             logger.debug(f'Setting API name from arguments: {args.api_name}')
             config.api_name = args.api_name
@@ -178,9 +193,27 @@ def load_config(args: Any = None) -> Config:
             logger.debug(f'Setting API spec path from arguments: {args.spec_path}')
             config.api_spec_path = args.spec_path
 
-        if hasattr(args, 'port') and args.port:
+        if arg_values.get('port') is not None:
             logger.debug(f'Setting port from arguments: {args.port}')
             config.port = args.port
+
+        for argument, attribute in (
+            ('transport', 'transport'),
+            ('host', 'host'),
+            ('http_path', 'http_path'),
+            ('allow_remote_bind', 'allow_remote_bind'),
+        ):
+            value = arg_values.get(argument)
+            if value is not None:
+                setattr(config, attribute, value)
+
+        allowed_origins = arg_values.get('allowed_origins')
+        if allowed_origins is not None:
+            config.allowed_origins = (
+                [origin.strip() for origin in allowed_origins.split(',') if origin.strip()]
+                if isinstance(allowed_origins, str)
+                else list(allowed_origins)
+            )
 
         if hasattr(args, 'debug') and args.debug:
             logger.debug('Setting debug mode from arguments')
@@ -272,6 +305,10 @@ def load_config(args: Any = None) -> Config:
 
         if hasattr(args, 'allowed_spec_dirs') and args.allowed_spec_dirs:
             config.allowed_spec_dirs = args.allowed_spec_dirs
+
+    from awslabs.openapi_mcp_server.transport import validate_transport_config
+
+    config.transport = validate_transport_config(config).value
 
     # Log final configuration details
     logger.info(f'Configuration loaded: API name={config.api_name}, transport={config.transport}')

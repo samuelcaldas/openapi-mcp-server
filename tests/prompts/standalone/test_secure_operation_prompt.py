@@ -85,6 +85,7 @@ class TestSecureOperationPrompt(unittest.TestCase):
             parameters=parameters,
             responses=responses,
             paths=paths,
+            route_classifications={(path, method.upper()): 'tool'},
         )
 
         # Verify prompt was created successfully
@@ -164,6 +165,7 @@ class TestSecureOperationPrompt(unittest.TestCase):
             parameters=parameters,
             responses=responses,
             paths=paths,
+            route_classifications={(path, method.upper()): 'tool'},
         )
 
         # Verify prompt was created successfully
@@ -233,6 +235,7 @@ class TestSecureOperationPrompt(unittest.TestCase):
                 description=description,
                 parameters=parameters,
                 responses=responses,
+                route_classifications={(path, method.upper()): 'resource'},
             )
 
             # Verify prompt was created successfully
@@ -250,10 +253,8 @@ class TestSecureOperationPrompt(unittest.TestCase):
             resource_message = messages[1]
             self.assertEqual(resource_message.role, 'user')
             self.assertEqual(resource_message.content.type, 'resource')
-            # AnyUrl percent-encodes curly braces in path templates
             uri_str = str(resource_message.content.resource.uri)
-            self.assertIn('petstore/pet/', uri_str)
-            self.assertIn('petId', uri_str)
+            self.assertEqual(uri_str, 'resource://getPetById')
             self.assertEqual(resource_message.content.resource.mimeType, 'application/json')
 
         finally:
@@ -315,6 +316,7 @@ class TestSecureOperationPrompt(unittest.TestCase):
             parameters=parameters,
             request_body=request_body,
             responses=responses,
+            route_classifications={(path, method.upper()): 'tool'},
         )
 
         # Verify prompt was created successfully

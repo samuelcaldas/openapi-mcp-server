@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for the OpenAPI MCP Server main function."""
 
+from awslabs.openapi_mcp_server.api.config import Config
 from awslabs.openapi_mcp_server.server import main
 from unittest.mock import MagicMock, patch
 
@@ -29,8 +30,7 @@ def test_main_function(mock_asyncio_run, mock_parse_args, mock_load_config, mock
     mock_args.log_level = 'INFO'
     mock_parse_args.return_value = mock_args
 
-    mock_config = MagicMock()
-    mock_config.transport = 'sse'
+    mock_config = Config(transport='sse')
     mock_load_config.return_value = mock_config
 
     mock_server = MagicMock()

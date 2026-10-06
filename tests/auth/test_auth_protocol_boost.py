@@ -1,6 +1,6 @@
 """Tests to boost coverage for auth_protocol.py."""
 
-import httpx
+import httpx2
 from awslabs.openapi_mcp_server.auth.auth_protocol import (
     AuthProviderProtocol,
 )
@@ -31,7 +31,7 @@ class TestAuthProtocolBoost:
             def get_auth_cookies(self) -> dict:
                 return {'session': 'test_session'}
 
-            def get_httpx_auth(self) -> httpx.Auth:
+            def get_httpx_auth(self) -> httpx2.Auth:
                 return None
 
         # Create an instance of the concrete implementation

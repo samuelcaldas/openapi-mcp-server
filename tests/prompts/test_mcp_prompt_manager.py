@@ -18,7 +18,6 @@ from awslabs.openapi_mcp_server.prompts import MCPPromptManager
 from awslabs.openapi_mcp_server.prompts.generators.workflow_prompts import (
     identify_workflows,
 )
-from fastmcp.server.providers.openapi import MCPType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -29,19 +28,12 @@ def mock_server():
     server.register_prompt = MagicMock()
     server.register_resource_handler = MagicMock()
 
-    # Mock _openapi_router for operation type determination
-    mock_route = MagicMock()
-    mock_route.path = '/pet/{petId}'
-    mock_route.method = 'GET'
-    mock_route.mcp_type = MCPType.RESOURCE
-
-    mock_route2 = MagicMock()
-    mock_route2.path = '/pet/findByStatus'
-    mock_route2.method = 'GET'
-    mock_route2.v = MCPType.TOOL
-
-    server._openapi_router = MagicMock()
-    server._openapi_router._routes = [mock_route, mock_route2]
+    server.route_classifications = {
+        ('/pet/{petId}', 'GET'): 'resource_template',
+        ('/pet/findByStatus', 'GET'): 'tool',
+        ('/pet', 'GET'): 'resource',
+        ('/pet', 'POST'): 'tool',
+    }
 
     return server
 
@@ -167,7 +159,10 @@ async def test_generate_prompts(mock_server, petstore_openapi_spec):
             ) as mock_create_wf:
                 # Call the function under test
                 result = await prompt_manager.generate_prompts(
-                    mock_server, 'petstore', petstore_openapi_spec
+                    mock_server,
+                    'petstore',
+                    petstore_openapi_spec,
+                    route_classifications=mock_server.route_classifications,
                 )
 
                 # Check that the functions were called with the correct arguments
@@ -339,23 +334,24 @@ def test_extract_prompt_arguments():
     assert status_param.required is False
 
 
-def test_determine_operation_type(mock_server):
-    """Test the determine_operation_type function."""
+def test_determine_operation_type_uses_explicit_route_classifications():
+    """Use public callback classifications without private router inspection."""
     from awslabs.openapi_mcp_server.prompts.generators.operation_prompts import (
         determine_operation_type,
     )
 
-    # Test with resource operation
-    result = determine_operation_type(mock_server, '/pet/{petId}', 'GET')
-    assert result == 'resource'
+    route_classifications = {
+        ('/pet/{petId}', 'GET'): 'resource_template',
+        ('/pet', 'GET'): 'resource',
+        ('/pet/findByStatus', 'GET'): 'tool',
+    }
 
-    # Test with tool operation
-    result = determine_operation_type(mock_server, '/pet/findByStatus', 'GET')
-    assert result == 'tool'
-
-    # Test with unknown operation
-    result = determine_operation_type(mock_server, '/unknown', 'GET')
-    assert result == 'tool'  # Default to tool
+    assert determine_operation_type(route_classifications, '/pet/{petId}', 'get') == (
+        'resource_template'
+    )
+    assert determine_operation_type(route_classifications, '/pet', 'GET') == 'resource'
+    assert determine_operation_type(route_classifications, '/pet/findByStatus', 'GET') == 'tool'
+    assert determine_operation_type(route_classifications, '/unknown', 'GET') is None
 
 
 def test_determine_mime_type():

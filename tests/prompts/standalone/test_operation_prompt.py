@@ -77,6 +77,7 @@ def test_create_operation_prompt():
         parameters=parameters,
         responses=responses,
         paths=paths,
+        route_classifications={(path, method.upper()): 'tool'},
     )
 
     # Verify prompt was created successfully
@@ -155,6 +156,7 @@ if __name__ == '__main__':
         parameters=parameters,
         responses=responses,
         paths=paths,
+        route_classifications={(path, method.upper()): 'tool'},
     )
 
     # Print the result

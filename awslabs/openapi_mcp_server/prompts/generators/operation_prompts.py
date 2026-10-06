@@ -18,13 +18,10 @@ from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.prompts.models import (
     PromptArgument,
 )
-from fastmcp.prompts import Message
-from fastmcp.prompts.prompt import Prompt
-from fastmcp.prompts.prompt import PromptArgument as FastMCPPromptArgument
-from fastmcp.server.providers.openapi import MCPType
+from fastmcp.prompts import Message, Prompt
+from fastmcp.prompts import PromptArgument as FastMCPPromptArgument
 from mcp.types import EmbeddedResource, TextResourceContents
-from pydantic import AnyUrl
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 
 def format_enum_values(enum_values: List[Any], max_inline: int = 4) -> str:
@@ -168,33 +165,15 @@ def extract_prompt_arguments(
     return arguments
 
 
-def determine_operation_type(server: Any, path: str, method: str) -> str:
-    """Determine if an operation is mapped as a resource or tool."""
-    # Default to tool if we can't determine
-    operation_type = 'tool'
-
-    # Check if server has route mappings
-    if hasattr(server, '_openapi_router') and hasattr(server._openapi_router, '_routes'):
-        routes = server._openapi_router._routes
-
-        # Look for a matching route
-        for route in routes:
-            route_path = getattr(route, 'path', '')
-            route_method = getattr(route, 'method', '')
-            mcp_type = getattr(route, 'mcp_type', None)
-
-            # Check if this route matches our operation
-            if route_path == path and route_method.upper() == method.upper() and mcp_type:
-                # Convert MCPType enum to string
-                if mcp_type == MCPType.RESOURCE:
-                    operation_type = 'resource'
-                elif mcp_type == MCPType.RESOURCE_TEMPLATE:
-                    operation_type = 'resource_template'
-                elif mcp_type == MCPType.TOOL:
-                    operation_type = 'tool'
-                break
-
-    return operation_type
+def determine_operation_type(
+    route_classifications: Optional[Mapping[tuple[str, str], str]],
+    path: str,
+    method: str,
+) -> Optional[str]:
+    """Return the route type captured from FastMCP's component callback."""
+    if route_classifications is None:
+        return None
+    return route_classifications.get((path, method.upper()))
 
 
 def determine_mime_type(responses: Optional[Dict[str, Any]]) -> str:
@@ -453,6 +432,8 @@ def create_operation_prompt(
     responses: Optional[Dict[str, Any]] = None,
     security: Optional[List[Dict[str, List[str]]]] = None,
     paths: Optional[Dict[str, Any]] = None,
+    route_classifications: Optional[Mapping[tuple[str, str], str]] = None,
+    resource_uri: Optional[str] = None,
 ) -> bool:
     """Create and register an operation prompt with the server.
 
@@ -469,14 +450,18 @@ def create_operation_prompt(
         responses: Response schemas
         security: Security requirements
         paths: OpenAPI paths object
+        route_classifications: Component types captured from the provider callback
+        resource_uri: Registered resource URI captured from the provider callback
 
     Returns:
         bool: True if prompt was registered successfully, False otherwise
 
     """
     try:
-        # Determine operation type
-        operation_type = determine_operation_type(server, path, method)
+        operation_type = determine_operation_type(route_classifications, path, method)
+        if operation_type is None:
+            logger.debug(f'Skipping prompt without a mapped MCP component: {method.upper()} {path}')
+            return False
 
         # Generate documentation
         documentation = generate_operation_documentation(
@@ -499,7 +484,7 @@ def create_operation_prompt(
         # Instead of using exec(), we'll use a function factory approach
 
         # Create a generic handler that will be wrapped with the correct signature
-        def generic_handler(doc, op_type, api_name_val, path_val, resp, args, *args_values):
+        def generic_handler(doc, op_type, api_name_val, path_val, resp, args, uri, *args_values):
             """Handle operation prompts generically."""
             # Create a dictionary of parameter values
             param_values = {}
@@ -515,14 +500,14 @@ def create_operation_prompt(
                 # Determine MIME type
                 mime_type = determine_mime_type(resp)
 
-                # Create resource URI
-                resource_uri = f'api://{api_name_val}{path_val}'
+                # The provider callback supplies FastMCP's registered resource URI.
+                resource_uri = uri or f'resource://{operation_id}'
 
                 # Add resource reference message using EmbeddedResource
                 embedded = EmbeddedResource(
                     type='resource',
                     resource=TextResourceContents(
-                        uri=AnyUrl(resource_uri),
+                        uri=resource_uri,
                         mimeType=mime_type,
                         text='',
                     ),
@@ -544,6 +529,7 @@ def create_operation_prompt(
             path,
             responses,
             prompt_arguments,
+            resource_uri,
         )
 
         # Define a function to create the appropriate operation function using inspect.Signature

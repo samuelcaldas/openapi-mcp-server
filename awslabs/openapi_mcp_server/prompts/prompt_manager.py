@@ -19,7 +19,7 @@ from awslabs.openapi_mcp_server.prompts.generators.workflow_prompts import (
     create_workflow_prompt,
     identify_workflows,
 )
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 
 class MCPPromptManager:
@@ -31,7 +31,12 @@ class MCPPromptManager:
         self.resource_handlers = {}
 
     async def generate_prompts(
-        self, server: Any, api_name: str, openapi_spec: Dict[str, Any]
+        self,
+        server: Any,
+        api_name: str,
+        openapi_spec: Dict[str, Any],
+        route_classifications: Mapping[tuple[str, str], str] | None = None,
+        resource_uris: Mapping[tuple[str, str], str] | None = None,
     ) -> Dict[str, bool]:
         """Generate MCP-compliant prompts from an OpenAPI specification.
 
@@ -39,6 +44,8 @@ class MCPPromptManager:
             server: MCP server instance
             api_name: Name of the API
             openapi_spec: OpenAPI specification
+            route_classifications: MCP component types captured by the provider callback
+            resource_uris: Registered resource URIs captured by the provider callback
 
         Returns:
             Status of prompt generation
@@ -56,8 +63,12 @@ class MCPPromptManager:
         operation_count = 0
 
         for path, path_item in paths.items():
+            if not isinstance(path_item, dict):
+                continue
             for method, operation in path_item.items():
                 if method not in ['get', 'post', 'put', 'patch', 'delete']:
+                    continue
+                if not isinstance(operation, dict):
                     continue
 
                 operation_id = operation.get('operationId')
@@ -73,11 +84,15 @@ class MCPPromptManager:
                     path=path,
                     summary=operation.get('summary', ''),
                     description=operation.get('description', ''),
-                    parameters=operation.get('parameters', []),
+                    parameters=self._merge_parameters(
+                        openapi_spec, path, operation.get('parameters', [])
+                    ),
                     request_body=operation.get('requestBody'),
                     responses=operation.get('responses', {}),
                     security=operation.get('security', []),
                     paths=paths,
+                    route_classifications=route_classifications,
+                    resource_uri=(resource_uris or {}).get((path, method.upper())),
                 )
 
                 if success:
@@ -100,6 +115,20 @@ class MCPPromptManager:
         logger.info(f'Generated {workflow_count} workflow prompts')
 
         return status
+
+    @staticmethod
+    def _merge_parameters(spec: Dict[str, Any], path: str, operation_parameters: Any) -> list:
+        """Merge path-level parameters with operation-level overrides."""
+        from awslabs.openapi_mcp_server.server import _get_parameters
+
+        paths = spec.get('paths', {})
+        path_item = paths.get(path, {})
+        path_parameters = path_item.get('parameters', []) if isinstance(path_item, dict) else []
+        combined = {}
+        for parameter in _get_parameters(spec, path_parameters, operation_parameters):
+            if parameter.get('name') and parameter.get('in'):
+                combined[(parameter['name'], parameter['in'])] = parameter
+        return list(combined.values())
 
     def register_api_resource_handler(self, server: Any, api_name: str, client: Any) -> None:
         """Register a handler for API resources.

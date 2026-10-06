@@ -60,7 +60,8 @@ FROM public.ecr.aws/amazonlinux/amazonlinux@sha256:fb70bd54d4a849293bfef9785ce63
 
 # Place executables in the environment at the front of the path and include other binaries
 ENV PATH="/app/.venv/bin:$PATH:/usr/sbin" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TZ=America/Sao_Paulo
 
 # Install other tools as needed for the MCP server
 # Add non-root user and ability to change directory into /root
@@ -80,6 +81,7 @@ COPY ./docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
 # Run as non-root
 USER app
 
-# When running the container, add --db-path and a bind mount to the host's db file
+EXPOSE 8000
+
 HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 CMD ["docker-healthcheck.sh"]
 ENTRYPOINT ["awslabs.openapi-mcp-server"]

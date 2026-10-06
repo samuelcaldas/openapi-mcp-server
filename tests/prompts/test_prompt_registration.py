@@ -40,6 +40,7 @@ def test_operation_prompt_registration():
         request_body=None,
         responses=None,
         security=None,
+        route_classifications={('/test', 'GET'): 'resource'},
     )
 
     # Check that the prompt was registered
@@ -129,6 +130,7 @@ def test_missing_add_prompt_method():
         request_body=None,
         responses=None,
         security=None,
+        route_classifications={('/test', 'GET'): 'resource'},
     )
 
     # Check that the function returned False
@@ -159,7 +161,12 @@ async def test_prompt_manager_generate_prompts():
             'awslabs.openapi_mcp_server.prompts.prompt_manager.identify_workflows', return_value=[]
         ):
             # Call generate_prompts
-            result = await prompt_manager.generate_prompts(server, 'test-api', openapi_spec)
+            result = await prompt_manager.generate_prompts(
+                server,
+                'test-api',
+                openapi_spec,
+                route_classifications={('/test', 'GET'): 'resource'},
+            )
 
             # Check the result
             assert result['operation_prompts_generated'] is True

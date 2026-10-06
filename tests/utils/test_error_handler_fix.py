@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for the error handler module."""
 
-import httpx
+import httpx2
 import pytest
 from awslabs.openapi_mcp_server.utils.error_handler import (
     ConnectionError,
@@ -30,16 +30,16 @@ class TestHandleRequestError:
     def test_handle_connect_timeout(self):
         """Test handling of connect timeout error."""
         # Create a mock error
-        error = httpx.ConnectTimeout('Connection timed out')
+        error = httpx2.ConnectTimeout('Connection timed out')
 
         # Fix the ERROR_CLASSES issue by patching it
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: ConnectionError,
-                httpx.ReadTimeout: ConnectionError,
-                httpx.ConnectError: NetworkError,
-                httpx.RequestError: NetworkError,
+                httpx2.ConnectTimeout: ConnectionError,
+                httpx2.ReadTimeout: ConnectionError,
+                httpx2.ConnectError: NetworkError,
+                httpx2.RequestError: NetworkError,
             },
         ):
             # Handle the error
@@ -52,16 +52,16 @@ class TestHandleRequestError:
     def test_handle_read_timeout(self):
         """Test handling of read timeout error."""
         # Create a mock error
-        error = httpx.ReadTimeout('Read timed out')
+        error = httpx2.ReadTimeout('Read timed out')
 
         # Fix the ERROR_CLASSES issue by patching it
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: ConnectionError,
-                httpx.ReadTimeout: ConnectionError,
-                httpx.ConnectError: NetworkError,
-                httpx.RequestError: NetworkError,
+                httpx2.ConnectTimeout: ConnectionError,
+                httpx2.ReadTimeout: ConnectionError,
+                httpx2.ConnectError: NetworkError,
+                httpx2.RequestError: NetworkError,
             },
         ):
             # Handle the error
@@ -74,16 +74,16 @@ class TestHandleRequestError:
     def test_handle_connect_error(self):
         """Test handling of connect error."""
         # Create a mock error
-        error = httpx.ConnectError('Could not connect to the server')
+        error = httpx2.ConnectError('Could not connect to the server')
 
         # Fix the ERROR_CLASSES issue by patching it
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: ConnectionError,
-                httpx.ReadTimeout: ConnectionError,
-                httpx.ConnectError: NetworkError,
-                httpx.RequestError: NetworkError,
+                httpx2.ConnectTimeout: ConnectionError,
+                httpx2.ReadTimeout: ConnectionError,
+                httpx2.ConnectError: NetworkError,
+                httpx2.RequestError: NetworkError,
             },
         ):
             # Handle the error
@@ -96,16 +96,16 @@ class TestHandleRequestError:
     def test_handle_generic_error(self):
         """Test handling of generic request error."""
         # Create a mock error
-        error = httpx.RequestError('Request error')
+        error = httpx2.RequestError('Request error')
 
         # Fix the ERROR_CLASSES issue by patching it
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: ConnectionError,
-                httpx.ReadTimeout: ConnectionError,
-                httpx.ConnectError: NetworkError,
-                httpx.RequestError: NetworkError,
+                httpx2.ConnectTimeout: ConnectionError,
+                httpx2.ReadTimeout: ConnectionError,
+                httpx2.ConnectError: NetworkError,
+                httpx2.RequestError: NetworkError,
             },
         ):
             # Handle the error
@@ -129,7 +129,7 @@ class TestSafeRequest:
         mock_request = MagicMock()
 
         # Create a mock error with request property
-        error = httpx.ConnectError('Could not connect to the server')
+        error = httpx2.ConnectError('Could not connect to the server')
         error.request = mock_request
 
         # Make the client raise the error
@@ -139,10 +139,10 @@ class TestSafeRequest:
         with patch(
             'awslabs.openapi_mcp_server.utils.error_handler.ERROR_CLASSES',
             {
-                httpx.ConnectTimeout: ConnectionError,
-                httpx.ReadTimeout: ConnectionError,
-                httpx.ConnectError: NetworkError,
-                httpx.RequestError: NetworkError,
+                httpx2.ConnectTimeout: ConnectionError,
+                httpx2.ReadTimeout: ConnectionError,
+                httpx2.ConnectError: NetworkError,
+                httpx2.RequestError: NetworkError,
             },
         ):
             # Make a request that will raise an error

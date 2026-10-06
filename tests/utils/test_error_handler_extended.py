@@ -13,7 +13,7 @@
 # limitations under the License.
 """Extended tests for error handling utilities."""
 
-import httpx
+import httpx2
 import json
 import pytest
 import time
@@ -153,7 +153,7 @@ class TestHandleHttpError:
         response.json.return_value = {'message': 'Invalid token'}
 
         # Create a mock error
-        error = httpx.HTTPStatusError('HTTP error', request=request, response=response)
+        error = httpx2.HTTPStatusError('HTTP error', request=request, response=response)
 
         # Handle the error
         with patch('awslabs.openapi_mcp_server.utils.error_handler.logger'):
@@ -179,7 +179,7 @@ class TestHandleHttpError:
         response.json.return_value = {'message': 'Token expired'}
 
         # Create a mock error
-        error = httpx.HTTPStatusError('HTTP error', request=request, response=response)
+        error = httpx2.HTTPStatusError('HTTP error', request=request, response=response)
 
         # Handle the error
         with patch('awslabs.openapi_mcp_server.utils.error_handler.logger'):
@@ -205,7 +205,7 @@ class TestHandleRequestError:
     def test_handle_connect_timeout(self):
         """Test handling of connect timeout error."""
         # Create a mock error
-        error = httpx.ConnectTimeout('Connection timed out')
+        error = httpx2.ConnectTimeout('Connection timed out')
 
         # Handle the error
         api_error = handle_request_error(error)
@@ -218,7 +218,7 @@ class TestHandleRequestError:
     def test_handle_read_timeout(self):
         """Test handling of read timeout error."""
         # Create a mock error
-        error = httpx.ReadTimeout('Read timed out')
+        error = httpx2.ReadTimeout('Read timed out')
 
         # Handle the error
         api_error = handle_request_error(error)
@@ -231,7 +231,7 @@ class TestHandleRequestError:
     def test_handle_connect_error(self):
         """Test handling of connect error."""
         # Create a mock error
-        error = httpx.ConnectError('Could not connect to the server')
+        error = httpx2.ConnectError('Could not connect to the server')
 
         # Handle the error
         api_error = handle_request_error(error)
@@ -244,7 +244,7 @@ class TestHandleRequestError:
     def test_handle_generic_error(self):
         """Test handling of generic request error."""
         # Create a mock error
-        error = httpx.RequestError('Request error')
+        error = httpx2.RequestError('Request error')
 
         # Handle the error
         api_error = handle_request_error(error)
@@ -286,7 +286,7 @@ class TestSafeRequest:
         mock_request = MagicMock()
 
         # Create a mock error with request property
-        error = httpx.ConnectError('Could not connect to the server')
+        error = httpx2.ConnectError('Could not connect to the server')
         type(error).request = mock_request
 
         # Make the client raise the error

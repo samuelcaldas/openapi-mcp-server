@@ -43,19 +43,19 @@ class TestServerCoverageBoost:
     @patch('awslabs.openapi_mcp_server.server.FastMCP')
     def test_create_mcp_server_basic(self, mock_fastmcp):
         """Test create_mcp_server function with basic configuration."""
-        # Create a mock config
-        mock_config = MagicMock(spec=Config)
-        mock_config.api_name = 'Test API'
-        mock_config.api_spec_url = None
-        mock_config.api_spec_path = None
-        mock_config.api_base_url = None
-        mock_config.auth_type = 'none'
-        mock_config.server_name = 'Test Server'
-        mock_config.debug = True
-        mock_config.message_timeout = 30
-        mock_config.host = 'localhost'
-        mock_config.port = 8000
-        mock_config.transport = 'stdio'
+        # Missing spec and base URL intentionally exercise the early error path.
+        mock_config = Config(
+            api_name='Test API',
+            api_spec_url=None,
+            api_spec_path=None,
+            api_base_url=None,
+            auth_type='none',
+            debug=True,
+            message_timeout=30,
+            host='localhost',
+            port=8000,
+            transport='stdio',
+        )
 
         # Mock FastMCP instance
         mock_server = MagicMock()

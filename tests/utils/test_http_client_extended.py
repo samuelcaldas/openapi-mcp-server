@@ -13,7 +13,7 @@
 # limitations under the License.
 """Extended tests for the HTTP client utilities."""
 
-import httpx
+import httpx2
 import pytest
 from awslabs.openapi_mcp_server.utils.http_client import (
     HttpClientFactory,
@@ -22,7 +22,7 @@ from awslabs.openapi_mcp_server.utils.http_client import (
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-class MockCognitoAuth(httpx.Auth):
+class MockCognitoAuth(httpx2.Auth):
     """Mock Cognito auth for testing."""
 
     def __init__(self, token='mock_token'):
@@ -33,7 +33,7 @@ class MockCognitoAuth(httpx.Auth):
         self.session_manager.get_access_token = MagicMock(return_value=token)
 
     def auth_flow(self, request):
-        """Auth flow required by httpx.Auth."""
+        """Auth flow required by httpx2.Auth."""
         request.headers['Authorization'] = f'Bearer {self.token}'
         yield request
 
@@ -46,7 +46,7 @@ async def test_http_client_factory_with_cognito_auth():
 
     # Test with Cognito auth
     client = HttpClientFactory.create_client('https://example.com', auth=auth)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert client._auth == auth
     await client.aclose()
 
@@ -60,7 +60,7 @@ async def test_http_client_factory_with_auth_and_headers():
     # Test with auth and headers
     headers = {'X-Custom': 'custom_value'}
     client = HttpClientFactory.create_client('https://example.com', auth=auth, headers=headers)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert client._auth == auth
     assert 'X-Custom' in client._headers
     assert client._headers['X-Custom'] == 'custom_value'
@@ -76,7 +76,7 @@ async def test_http_client_factory_with_auth_no_token():
 
     # Test with auth but no token
     client = HttpClientFactory.create_client('https://example.com', auth=auth)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert client._auth == auth
     await client.aclose()
 
@@ -90,7 +90,7 @@ async def test_http_client_factory_with_auth_and_existing_auth_header():
     # Test with auth and existing Authorization header
     headers = {'Authorization': 'Bearer existing_token'}
     client = HttpClientFactory.create_client('https://example.com', auth=auth, headers=headers)
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
     assert client._auth == auth
     assert 'Authorization' in client._headers
     assert (
@@ -108,7 +108,7 @@ async def test_http_client_factory_with_custom_limits():
     )
 
     # Verify client was created
-    assert isinstance(client, httpx.AsyncClient)
+    assert isinstance(client, httpx2.AsyncClient)
 
     # Close the client
     await client.aclose()
@@ -122,14 +122,14 @@ async def test_make_request_with_retry_max_attempts():
     mock_client.request = AsyncMock()
 
     # Set up the mock to always fail with a connection error
-    mock_client.request.side_effect = httpx.ConnectError('Connection error')
+    mock_client.request.side_effect = httpx2.ConnectError('Connection error')
 
     # Set USE_TENACITY to False and patch asyncio.sleep to avoid actual delays
     with patch('awslabs.openapi_mcp_server.utils.http_client.USE_TENACITY', False):
         with patch('awslabs.openapi_mcp_server.utils.http_client.TENACITY_AVAILABLE', False):
             with patch('asyncio.sleep', AsyncMock()) as mock_sleep:
                 # Should raise after max_retries attempts
-                with pytest.raises(httpx.ConnectError):
+                with pytest.raises(httpx2.ConnectError):
                     await make_request_with_retry(mock_client, 'GET', '/test', max_retries=3)
 
                 # Verify the request was called max_retries times
@@ -148,7 +148,7 @@ async def test_make_request_with_retry_http_status_error():
     # Create a mock response for the failed attempt
     mock_response = MagicMock()
     mock_response.status_code = 404
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+    mock_response.raise_for_status.side_effect = httpx2.HTTPStatusError(
         '404 Not Found', request=MagicMock(), response=mock_response
     )
 
@@ -160,7 +160,7 @@ async def test_make_request_with_retry_http_status_error():
         with patch('awslabs.openapi_mcp_server.utils.http_client.TENACITY_AVAILABLE', False):
             with patch('asyncio.sleep', AsyncMock()) as mock_sleep:
                 # Should raise immediately for HTTP status errors (no retry)
-                with pytest.raises(httpx.HTTPStatusError):
+                with pytest.raises(httpx2.HTTPStatusError):
                     await make_request_with_retry(mock_client, 'GET', '/test', max_retries=3)
 
                 # Verify the request was called only once
@@ -183,7 +183,7 @@ async def test_make_request_with_retry_timeout_error():
     mock_response.raise_for_status = MagicMock()
 
     # Set up the mock to fail with a timeout error, then succeed
-    mock_client.request.side_effect = [httpx.TimeoutException('Timeout error'), mock_response]
+    mock_client.request.side_effect = [httpx2.TimeoutException('Timeout error'), mock_response]
 
     # Set USE_TENACITY to False and patch asyncio.sleep to avoid actual delays
     with patch('awslabs.openapi_mcp_server.utils.http_client.USE_TENACITY', False):
