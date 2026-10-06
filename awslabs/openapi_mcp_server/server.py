@@ -25,6 +25,11 @@ import sys
 from awslabs.openapi_mcp_server import logger
 from awslabs.openapi_mcp_server.api.config import Config, load_config
 from awslabs.openapi_mcp_server.prompts import MCPPromptManager
+from awslabs.openapi_mcp_server.transport import (
+    is_remote_binding,
+    run_transport,
+    validate_transport_config,
+)
 from awslabs.openapi_mcp_server.utils.http_client import HttpClientFactory, make_request_with_retry
 from awslabs.openapi_mcp_server.utils.metrics_provider import metrics
 from awslabs.openapi_mcp_server.utils.openapi import load_openapi_spec
@@ -152,6 +157,9 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         FastMCP: The configured FastMCP server
 
     """
+    # Config loading validates transport settings before spec or auth setup.
+    # This factory also accepts partial test/programmatic Config-compatible objects.
+
     # Log environment information
     logger.debug('Environment information:')
     logger.debug(f'Python version: {sys.version}')
@@ -652,40 +660,16 @@ async def get_all_counts(server: FastMCP) -> tuple[int, int, int, int]:
 
 
 def setup_signal_handlers():
-    """Set up signal handlers for graceful shutdown."""
-    # Store original SIGINT handler
-    original_sigint = signal.getsignal(signal.SIGINT)
+    """Log final metrics and exit cleanly on SIGINT or SIGTERM."""
 
     def signal_handler(sig, frame):
-        """Handle signals by logging metrics then chain to original handler."""
         logger.debug(f'Received signal {sig}, shutting down gracefully...')
-
-        # Log final metrics
         summary = metrics.get_summary()
         logger.info(f'Final metrics: {summary}')
+        logger.info('Process Interrupted, Shutting down gracefully...')
+        sys.exit(0)
 
-        # if sig is signal.SIGINT handle gracefully
-        if sig == signal.SIGINT:
-            logger.info('Process Interrupted, Shutting down gracefully...')
-            sys.exit(0)
-
-        # For SIGINT, chain to the original handler
-        if (
-            sig == signal.SIGINT
-            and original_sigint != signal.SIG_DFL
-            and original_sigint != signal.SIG_IGN
-        ):
-            # Call the original handler
-            if callable(original_sigint):
-                original_sigint(sig, frame)
-
-        # For other signals or if no original handler, just return
-        # This lets the default handling take over
-
-    # Register for SIGTERM only
     signal.signal(signal.SIGTERM, signal_handler)
-
-    # For SIGINT, we'll use a special handler that logs then chains to original
     signal.signal(signal.SIGINT, signal_handler)
 
 
@@ -702,6 +686,24 @@ def main():
         help='Set logging level',
     )
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument(
+        '--transport',
+        choices=['stdio', 'http', 'streamable-http', 'sse'],
+        help='MCP transport (default: stdio)',
+    )
+    parser.add_argument('--host', help='Network transport bind host (default: 127.0.0.1)')
+    parser.add_argument('--port', type=int, help='Network transport port (default: 8000)')
+    parser.add_argument('--http-path', help='Streamable HTTP endpoint path (default: /mcp)')
+    parser.add_argument(
+        '--allow-remote-bind',
+        action='store_true',
+        default=None,
+        help='Allow binding beyond loopback',
+    )
+    parser.add_argument(
+        '--allowed-origins',
+        help='Comma-separated exact HTTP(S) origins allowed by network transports',
+    )
 
     # API configuration
     parser.add_argument('--api-name', help='Name of the API (default: petstore)')
@@ -803,6 +805,11 @@ def main():
     config = load_config(args)
     logger.debug(f'Configuration loaded: api_name={config.api_name}, transport={config.transport}')
 
+    # Validate transports before spec loading, network access, or authentication setup.
+    validate_transport_config(config)
+    if is_remote_binding(config):
+        logger.warning('Remote MCP binding has no inbound authentication configured')
+
     # Create and run the MCP server
     logger.info('Creating MCP server')
     mcp_server = create_mcp_server(config)
@@ -834,9 +841,8 @@ def main():
         logger.error(f'Traceback: {traceback.format_exc()}')
         sys.exit(1)
 
-    # Run server with stdio transport only
-    logger.info('Running server with stdio transport')
-    mcp_server.run()
+    logger.info(f'Running server with {config.transport} transport')
+    run_transport(mcp_server, config)
 
 
 if __name__ == '__main__':

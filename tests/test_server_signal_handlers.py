@@ -31,7 +31,6 @@ def test_setup_signal_handlers_registration(mock_metrics, mock_logger, mock_sign
     setup_signal_handlers()
 
     # Verify that signal handlers were registered
-    mock_signal.getsignal.assert_called_once_with(mock_signal.SIGINT)
     mock_signal.signal.assert_has_calls(
         [
             call(mock_signal.SIGTERM, mock_signal.signal.call_args[0][1]),
@@ -64,8 +63,8 @@ def test_signal_handler_sigterm(mock_exit, mock_metrics, mock_logger, mock_signa
     mock_metrics.get_summary.assert_called_once()
     mock_logger.info.assert_any_call("Final metrics: {'api_calls': 10, 'errors': 2}")
 
-    # Verify that sys.exit was not called for SIGTERM
-    mock_exit.assert_not_called()
+    # SIGTERM must stop the stdio server after logging final metrics.
+    mock_exit.assert_called_once_with(0)
 
     # Verify that the original handler was not called
     mock_original_handler.assert_not_called()
@@ -103,8 +102,7 @@ def test_signal_handler_sigint(mock_exit, mock_metrics, mock_logger, mock_signal
     # Verify that sys.exit was called with 0
     mock_exit.assert_called_once_with(0)
 
-    # Verify that the original handler was called
-    mock_original_handler.assert_called_once_with(mock_signal.SIGINT, None)
+    mock_original_handler.assert_not_called()
 
 
 @patch('awslabs.openapi_mcp_server.server.signal')

@@ -13,6 +13,8 @@
 # limitations under the License.
 """Extended tests for the OpenAPI MCP Server main function."""
 
+import pytest
+from awslabs.openapi_mcp_server.api.config import Config
 from awslabs.openapi_mcp_server.server import main
 from unittest.mock import MagicMock, patch
 
@@ -37,8 +39,7 @@ def test_main_with_stdio_transport(
     mock_args.log_level = 'INFO'
     mock_parse_args.return_value = mock_args
 
-    mock_config = MagicMock()
-    mock_config.transport = 'stdio'
+    mock_config = Config()
     mock_load_config.return_value = mock_config
 
     mock_server = MagicMock()
@@ -69,6 +70,7 @@ def test_main_with_stdio_transport(
 @patch('awslabs.openapi_mcp_server.server.asyncio.run')
 @patch('awslabs.openapi_mcp_server.server.setup_signal_handlers')
 @patch('awslabs.openapi_mcp_server.server.logger')
+@pytest.mark.filterwarnings('ignore:SSE transport is deprecated')
 def test_main_with_sse_transport(
     mock_logger,
     mock_setup_signal_handlers,
@@ -83,8 +85,7 @@ def test_main_with_sse_transport(
     mock_args.log_level = 'INFO'
     mock_parse_args.return_value = mock_args
 
-    mock_config = MagicMock()
-    mock_config.transport = 'sse'
+    mock_config = Config(transport='sse')
     mock_load_config.return_value = mock_config
 
     mock_server = MagicMock()
@@ -102,9 +103,9 @@ def test_main_with_sse_transport(
     mock_create_mcp_server.assert_called_once_with(mock_config)
     mock_setup_signal_handlers.assert_called_once()
 
-    # Verify that the server was run with stdio transport regardless of config
-    # Since SSE support has been removed, we always use stdio transport
-    mock_server.run.assert_called_once_with()
+    options = mock_server.run.call_args.kwargs
+    assert options['transport'] == 'sse'
+    assert options['path'] == '/sse'
 
 
 @patch('awslabs.openapi_mcp_server.server.create_mcp_server')
@@ -129,8 +130,7 @@ def test_main_with_no_tools_or_resources(
     mock_args.log_level = 'INFO'
     mock_parse_args.return_value = mock_args
 
-    mock_config = MagicMock()
-    mock_config.transport = 'stdio'
+    mock_config = Config()
     mock_load_config.return_value = mock_config
 
     mock_server = MagicMock()
@@ -176,8 +176,7 @@ def test_main_with_get_all_counts_error(
     mock_args.log_level = 'INFO'
     mock_parse_args.return_value = mock_args
 
-    mock_config = MagicMock()
-    mock_config.transport = 'stdio'
+    mock_config = Config()
     mock_load_config.return_value = mock_config
 
     mock_server = MagicMock()

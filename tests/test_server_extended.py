@@ -22,21 +22,21 @@ from unittest.mock import MagicMock, call, patch
 @pytest.fixture
 def mock_config():
     """Create a mock configuration for testing."""
-    config = MagicMock(spec=Config)
-    config.api_name = 'test-api'
-    config.api_spec_url = 'https://example.com/openapi.json'
-    config.api_spec_path = None
-    config.api_base_url = 'https://example.com/api'
-    config.auth_type = 'none'
-    config.auth_username = None
-    config.auth_password = None
-    config.auth_token = None
-    config.auth_api_key = None
-    config.auth_api_key_name = 'api_key'
-    config.auth_api_key_in = 'header'
-    config.version = '1.0.0'
-    config.transport = 'stdio'
-    return config
+    return Config(
+        api_name='test-api',
+        api_spec_url='https://example.com/openapi.json',
+        api_spec_path=None,
+        api_base_url='https://example.com/api',
+        auth_type='none',
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_api_key=None,
+        auth_api_key_name='api_key',
+        auth_api_key_in='header',
+        version='1.0.0',
+        transport='stdio',
+    )
 
 
 # NOTE: ``test_create_mcp_server_with_query_params_routes`` was removed in the
@@ -98,7 +98,6 @@ def test_setup_signal_handlers(mock_exit, mock_metrics, mock_logger, mock_signal
     setup_signal_handlers()
 
     # Verify that signal handlers were registered
-    mock_signal.getsignal.assert_called_once_with(mock_signal.SIGINT)
     mock_signal.signal.assert_has_calls(
         [
             call(mock_signal.SIGTERM, mock_signal.signal.call_args[0][1]),
@@ -116,7 +115,8 @@ def test_setup_signal_handlers(mock_exit, mock_metrics, mock_logger, mock_signal
     mock_metrics.get_summary.assert_called_once()
     mock_logger.info.assert_any_call("Final metrics: {'api_calls': 10, 'errors': 2}")
 
-    # Reset mocks
+    mock_exit.assert_called_once_with(0)
+    mock_exit.reset_mock()
     mock_metrics.reset_mock()
     mock_logger.reset_mock()
 
