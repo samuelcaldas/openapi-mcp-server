@@ -410,37 +410,49 @@ def load_openapi_spec(
         logger.info(f'Fetching OpenAPI spec from URL: {validated_url.original_url}')
         last_exception = None
 
-        # Use retry logic for network resilience
-        for attempt in range(3):
-            try:
-                content = _pinned_fetch(validated_url, allow_http=allow_http)
-                spec = _parse_spec_bytes(content)
+        try:
+            # Use retry logic for network resilience
+            for attempt in range(3):
+                try:
+                    content = _pinned_fetch(validated_url, allow_http=allow_http)
+                    spec = _parse_spec_bytes(content)
 
-                # Validate the spec
-                if validate_openapi_spec(spec):
-                    return spec
-                else:
-                    logger.error('Invalid OpenAPI specification')
-                    raise ValueError('Invalid OpenAPI specification')
+                    # Validate the spec
+                    if validate_openapi_spec(spec):
+                        return spec
+                    else:
+                        logger.error('Invalid OpenAPI specification')
+                        raise ValueError('Invalid OpenAPI specification')
 
-            except (SSRFError, SSRFFetchError):
-                # Security failures must not be retried away.
-                raise
-            except (httpx2.TimeoutException, httpx2.HTTPError) as e:
-                last_exception = e
-                if attempt < 2:  # Don't log on the last attempt
-                    logger.warning(f'Attempt {attempt + 1} failed: {e}. Retrying...')
-                    time.sleep(1 * (2**attempt))  # Exponential backoff
-                else:
-                    # Re-raise the exception on the last attempt
-                    logger.error(f'All retry attempts failed: {e}')
+                except (SSRFError, SSRFFetchError):
+                    # Security failures must not be retried away.
                     raise
+                except (httpx2.TimeoutException, httpx2.HTTPError) as e:
+                    last_exception = e
+                    if attempt < 2:  # Don't log on the last attempt
+                        logger.warning(f'Attempt {attempt + 1} failed: {e}. Retrying...')
+                        time.sleep(1 * (2**attempt))  # Exponential backoff
+                    else:
+                        # Re-raise the exception on the last attempt
+                        logger.error(f'All retry attempts failed: {e}')
+                        raise
 
-        # This will only be reached if all retries fail and no exception is raised
-        if last_exception:
-            raise last_exception
-        else:
-            raise httpx2.HTTPError('All retry attempts failed')
+            # This will only be reached if all retries fail and no exception is raised
+            if last_exception:
+                raise last_exception
+            else:
+                raise httpx2.HTTPError('All retry attempts failed')
+
+        except (SSRFError, SSRFFetchError):
+            raise  # security failures NEVER fall back
+        except (httpx2.TimeoutException, httpx2.HTTPError, ValueError) as exc:
+            if path:
+                logger.warning(
+                    f'URL fetch failed ({exc}); falling back to local file: {path}'
+                )
+                # fall through to file branch below
+            else:
+                raise
 
     # Load from file
     if path:
