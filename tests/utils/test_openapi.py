@@ -150,3 +150,90 @@ class TestOpenAPIUtils:
         ):
             with pytest.raises(ValueError, match='Invalid OpenAPI specification'):
                 load_openapi_spec(path='/path/to/file.json')
+
+
+class TestURLFallbackToFile:
+    """Tests for URL-fetch-fails-fall-back-to-local-file behaviour."""
+
+    # Minimal valid-ish spec JSON the file branch will read and pass validation.
+    _SPEC_JSON = b'{"openapi": "3.0.0", "info": {"title": "T", "version": "1"}, "paths": {}}'
+
+    @patch('awslabs.openapi_mcp_server.utils.openapi.time.sleep')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._pinned_fetch')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._validate_url_sync')
+    @patch('pathlib.Path.exists', return_value=True)
+    def test_load_openapi_spec_falls_back_to_file_on_http_error(
+        self, mock_exists, mock_validate_url, mock_fetch, mock_sleep
+    ):
+        """URL HTTPError with path provided triggers warning and file fallback."""
+        mock_validate_url.return_value = MagicMock()
+        mock_fetch.side_effect = httpx2.HTTPError('network error')
+
+        with (
+            patch(
+                'builtins.open',
+                mock_open(read_data=self._SPEC_JSON),
+            ),
+            patch('awslabs.openapi_mcp_server.utils.openapi.logger') as mock_logger,
+        ):
+            result = load_openapi_spec(
+                url='https://example.test/spec.json',
+                path='/some/local/spec.json',
+            )
+
+        assert result is not None
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any('falling back' in msg for msg in warning_calls)
+
+    @patch('awslabs.openapi_mcp_server.utils.openapi.time.sleep')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._pinned_fetch')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._validate_url_sync')
+    @patch('pathlib.Path.exists', return_value=True)
+    def test_load_openapi_spec_falls_back_to_file_on_timeout(
+        self, mock_exists, mock_validate_url, mock_fetch, mock_sleep
+    ):
+        """URL TimeoutException with path provided triggers warning and file fallback."""
+        mock_validate_url.return_value = MagicMock()
+        mock_fetch.side_effect = httpx2.TimeoutException('timed out')
+
+        with (
+            patch(
+                'builtins.open',
+                mock_open(read_data=self._SPEC_JSON),
+            ),
+            patch('awslabs.openapi_mcp_server.utils.openapi.logger') as mock_logger,
+        ):
+            result = load_openapi_spec(
+                url='https://example.test/spec.json',
+                path='/some/local/spec.json',
+            )
+
+        assert result is not None
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any('falling back' in msg for msg in warning_calls)
+
+    @patch('awslabs.openapi_mcp_server.utils.openapi._validate_url_sync')
+    def test_load_openapi_spec_does_not_fall_back_on_ssrf_error(self, mock_validate_url):
+        """SSRFError always propagates — file path must not suppress it."""
+        from fastmcp.server.auth.ssrf import SSRFError
+
+        mock_validate_url.side_effect = SSRFError('blocked')
+
+        with pytest.raises(SSRFError, match='blocked'):
+            load_openapi_spec(
+                url='https://internal.example/spec.json',
+                path='/some/local/spec.json',
+            )
+
+    @patch('awslabs.openapi_mcp_server.utils.openapi.time.sleep')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._pinned_fetch')
+    @patch('awslabs.openapi_mcp_server.utils.openapi._validate_url_sync')
+    def test_load_openapi_spec_raises_when_url_fails_and_no_path_given(
+        self, mock_validate_url, mock_fetch, mock_sleep
+    ):
+        """URL HTTPError without path provided raises — no fallback available."""
+        mock_validate_url.return_value = MagicMock()
+        mock_fetch.side_effect = httpx2.HTTPError('network error')
+
+        with pytest.raises(httpx2.HTTPError):
+            load_openapi_spec(url='https://example.test/spec.json')

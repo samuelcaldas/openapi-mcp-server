@@ -447,9 +447,7 @@ def load_openapi_spec(
             raise  # security failures NEVER fall back
         except (httpx2.TimeoutException, httpx2.HTTPError, ValueError) as exc:
             if path:
-                logger.warning(
-                    f'URL fetch failed ({exc}); falling back to local file: {path}'
-                )
+                logger.warning(f'URL fetch failed ({exc}); falling back to local file: {path}')
                 # fall through to file branch below
             else:
                 raise
