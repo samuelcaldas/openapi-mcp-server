@@ -90,3 +90,6 @@ Thumbs.db
 
 # Playwright
 .playwright-mcp/
+
+# Git worktrees
+.worktrees/
