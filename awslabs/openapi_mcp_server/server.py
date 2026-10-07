@@ -282,8 +282,9 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
 
         # Register only the provider we need
         if config.auth_type and config.auth_type != 'none':
-            logger.debug(f'Registering authentication provider for type: {config.auth_type}')
-            register_provider_by_type(config.auth_type)
+            if not is_auth_type_available(config.auth_type):
+                logger.debug(f'Registering authentication provider for type: {config.auth_type}')
+                register_provider_by_type(config.auth_type)
         else:
             logger.debug('No authentication type specified, using none')
 

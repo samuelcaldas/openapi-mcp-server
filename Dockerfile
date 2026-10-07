@@ -12,70 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# dependabot should continue to update this to the latest hash.
-FROM public.ecr.aws/amazonlinux/amazonlinux@sha256:fb70bd54d4a849293bfef9785ce63aa1eac2557e0167af4f32f56286bd35d783 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.23 AS uv-bin
 
-# Install build dependencies needed for compiling packages
-RUN dnf install -y shadow-utils python3 python3-devel gcc && \
-    dnf clean all
+FROM debian:bookworm-slim AS builder
 
-# Install the project into `/app`
+COPY --from=uv-bin /uv /bin/uv
+
+# Install Python 3.11 build dependencies matching Debian 12 distroless runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    python3-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --force --system app && \
+    useradd app -g app -d /app
+
 WORKDIR /app
 
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON=/usr/bin/python3 \
+    UV_FROZEN=true
 
-# Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
+COPY pyproject.toml uv.lock ./
 
-# Prefer the system python
-ENV UV_PYTHON_PREFERENCE=only-managed
-
-# Run without updating the uv.lock file like running with `--frozen`
-ENV UV_FROZEN=true
-
-# Copy the required files first
-COPY pyproject.toml uv.lock uv-requirements.txt ./
-
-# Python optimization and uv configuration
-ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
-    python3 -m ensurepip && \
-    python3 -m pip install --require-hashes --requirement uv-requirements.txt --no-cache-dir && \
-    uv sync --python 3.13 --frozen --no-install-project --no-dev --no-editable
+    uv sync --frozen --no-install-project --no-dev --no-editable
 
-# Then, add the rest of the project source code and install it
-# Installing separately from its dependencies allows optimal layer caching
 COPY . /app
+
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --python 3.13 --frozen --no-dev --no-editable
-
-# Make the directory just in case it doesn't exist
-RUN mkdir -p /root/.local
-
-# Intermediate stage: create app user/group on AL2023 so UID/GID are baked
-FROM public.ecr.aws/amazonlinux/amazonlinux@sha256:fb70bd54d4a849293bfef9785ce63aa1eac2557e0167af4f32f56286bd35d783 AS user
-
-RUN dnf install -y shadow-utils && \
-    dnf clean all && \
-    groupadd --force --system app && \
-    useradd app -g app -d /app && \
-    chmod o+x /root
+    uv sync --frozen --no-dev --no-editable && \
+    chown -R app:app /app
 
 # Final distroless stage — no package manager, no shell, minimal attack surface
 FROM gcr.io/distroless/python3-debian12
 
-# Copy user/group databases from user stage so USER app resolves by name
-COPY --from=user /etc/passwd /etc/passwd
-COPY --from=user /etc/group /etc/group
-COPY --from=user /etc/shadow /etc/shadow
-
-# Get the project from the uv layer
-COPY --from=uv --chown=app:app /root/.local /root/.local
-COPY --from=uv --chown=app:app /app/.venv /app/.venv
+# Copy user/group databases so USER app resolves by name
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+COPY --from=builder --chown=app:app /app /app
 
 # Get healthcheck script
 COPY ./docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
@@ -85,7 +63,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     TZ=America/Sao_Paulo
 
-# Run as non-root
 USER app
 
 EXPOSE 8000

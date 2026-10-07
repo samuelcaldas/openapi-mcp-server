@@ -353,6 +353,44 @@ def _parse_spec_bytes(content: bytes) -> Dict[str, Any]:
     return _require_mapping(basic if basic is not None else _basic_parse(content))
 
 
+def _sanitize_openapi_schema(node: Any) -> None:
+    """Normalize common OpenAPI schema anomalies in-place.
+
+    Fixes:
+    - OpenAPI 3.0 multi-type array with null (e.g. ['string', 'null']) converted to type + nullable=True
+    - Property-level boolean required (Swagger 2.0 artifact) removed
+    - Array items as list (Swagger 2.0 tuple artifact) converted to single schema
+    - OAuth2 flows missing required scopes mapping
+    """
+    if isinstance(node, dict):
+        if 'type' in node and isinstance(node['type'], list):
+            types = [t for t in node['type'] if t != 'null']
+            if len(types) == 1:
+                node['type'] = types[0]
+                node['nullable'] = True
+            elif 'null' in node['type']:
+                node['nullable'] = True
+                node['type'] = types[0] if types else 'string'
+
+        if 'required' in node and isinstance(node['required'], bool):
+            del node['required']
+
+        if 'items' in node and isinstance(node['items'], list):
+            if len(node['items']) > 0:
+                node['items'] = node['items'][0]
+
+        if 'flows' in node and isinstance(node['flows'], dict):
+            for flow_name, flow_obj in node['flows'].items():
+                if isinstance(flow_obj, dict) and 'scopes' not in flow_obj:
+                    flow_obj['scopes'] = {}
+
+        for v in list(node.values()):
+            _sanitize_openapi_schema(v)
+    elif isinstance(node, list):
+        for item in node:
+            _sanitize_openapi_schema(item)
+
+
 @cached(ttl_seconds=3600)  # Cache OpenAPI specs for 1 hour
 def load_openapi_spec(
     url: str = '',
@@ -416,6 +454,7 @@ def load_openapi_spec(
                 try:
                     content = _pinned_fetch(validated_url, allow_http=allow_http)
                     spec = _parse_spec_bytes(content)
+                    _sanitize_openapi_schema(spec)
 
                     # Validate the spec
                     if validate_openapi_spec(spec):
@@ -542,6 +581,7 @@ def load_openapi_spec(
             # Enforce a mapping root so validation gets a clear error rather than
             # an opaque TypeError on a non-dict (list/scalar/None) document.
             spec = _require_mapping(spec)
+            _sanitize_openapi_schema(spec)
 
             # Validate the spec
             if validate_openapi_spec(spec):

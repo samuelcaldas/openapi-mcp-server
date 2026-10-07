@@ -272,3 +272,153 @@ async def test_betha_stdio_transport_calls_real_api(betha_credentials):
     )
     async with stdio_client(parameters) as (read, write):
         await asyncio.wait_for(_assert_betha_tool_call(read, write), timeout=120)
+
+
+# ---------------------------------------------------------------------------
+# Additional specs: Contábil, Planejamento, Contábil-Int transports
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'api_name,spec_rel_path,api_url',
+    [
+        (
+            'Contabil',
+            'tests/fixtures/betha/contabil-service-layer.json',
+            'https://contabil.betha.cloud/contabil/service-layer',
+        ),
+        (
+            'Planejamento',
+            'tests/fixtures/betha/planejamento-service-layer.json',
+            'https://planejamento.betha.cloud/planejamento/service-layer',
+        ),
+        (
+            'ContabilInt',
+            'tests/fixtures/betha/contabil-integration-services.json',
+            'https://contabil-sl.betha.cloud/contabil-integration-services',
+        ),
+    ],
+)
+async def test_betha_additional_specs_expose_tools_over_http(
+    api_name, spec_rel_path, api_url, betha_credentials
+):
+    """Streamable-HTTP transport initializes and exposes tools for Betha specs."""
+    spec_path = REPOSITORY_ROOT / spec_rel_path
+    if not spec_path.exists():
+        pytest.skip(f'Spec file {spec_rel_path} not found')
+
+    port = _reserve_port()
+    arguments = [
+        sys.executable,
+        '-m',
+        'awslabs.openapi_mcp_server.server',
+        '--spec-path',
+        str(spec_path),
+        '--api-url',
+        api_url,
+        '--api-name',
+        api_name,
+        '--auth-type',
+        'bearer',
+        '--auth-token',
+        betha_credentials['api_key'],
+        '--transport',
+        'http',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        str(port),
+        '--max-tools',
+        '10',
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *arguments,
+        cwd=REPOSITORY_ROOT,
+        env=_server_environment(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        try:
+            await _wait_for_listener(process, '127.0.0.1', port)
+        except (RuntimeError, TimeoutError) as error:
+            process.kill()
+            stdout, stderr = await process.communicate()
+            raise RuntimeError(
+                f'{error}; server output: {(stdout + stderr).decode(errors="replace")}'
+            ) from error
+
+        async with httpx2.AsyncClient(timeout=30) as client:
+            async with streamable_http_client(
+                f'http://127.0.0.1:{port}/mcp',
+                http_client=client,
+                max_sse_event_size=None,
+            ) as (read, write):
+                async with ClientSession(read, write, read_timeout_seconds=30) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=45)
+                    result = await asyncio.wait_for(session.list_tools(), timeout=30)
+                    assert len(result.tools) > 0, f'Expected tools for {api_name}'
+    finally:
+        await _stop_process(process)
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_betha_contabil_sse_transport_lists_tools(betha_credentials):
+    """SSE transport initializes and lists tools for Contábil with tool limit."""
+    spec_path = REPOSITORY_ROOT / 'tests/fixtures/betha/contabil-service-layer.json'
+    if not spec_path.exists():
+        pytest.skip('Contábil spec not found')
+
+    port = _reserve_port()
+    arguments = [
+        sys.executable,
+        '-m',
+        'awslabs.openapi_mcp_server.server',
+        '--spec-path',
+        str(spec_path),
+        '--api-url',
+        'https://contabil.betha.cloud/contabil/service-layer',
+        '--api-name',
+        'Contabil',
+        '--auth-type',
+        'bearer',
+        '--auth-token',
+        betha_credentials['api_key'],
+        '--transport',
+        'sse',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        str(port),
+        '--max-tools',
+        '10',
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *arguments,
+        cwd=REPOSITORY_ROOT,
+        env=_server_environment(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        try:
+            await _wait_for_listener(process, '127.0.0.1', port)
+        except (RuntimeError, TimeoutError) as error:
+            process.kill()
+            stdout, stderr = await process.communicate()
+            raise RuntimeError(
+                f'{error}; server output: {(stdout + stderr).decode(errors="replace")}'
+            ) from error
+
+        async with sse_client(
+            f'http://127.0.0.1:{port}/sse', timeout=30, sse_read_timeout=45
+        ) as (read, write):
+            async with ClientSession(read, write, read_timeout_seconds=30) as session:
+                await asyncio.wait_for(session.initialize(), timeout=45)
+                result = await asyncio.wait_for(session.list_tools(), timeout=30)
+                assert len(result.tools) > 0, 'Expected tools for Contabil via SSE'
+    finally:
+        await _stop_process(process)
