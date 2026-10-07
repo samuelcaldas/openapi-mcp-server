@@ -22,24 +22,36 @@ Tag: ``docker`` — exclude from CI with ``-m 'not docker'``.
 """
 
 import asyncio
+import httpx2
+import json
 import os
+import pytest
 import shutil
 import socket
 import subprocess
-import sys
 import time
-import pytest
-
-from pathlib import Path
 from dotenv import load_dotenv
-
-import httpx2
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from pathlib import Path
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-BETHA_ENV = REPOSITORY_ROOT / '.env.betha'
+
+
+def _find_betha_env() -> Path:
+    direct = REPOSITORY_ROOT / '.env.betha'
+    if direct.exists():
+        return direct
+    worktree_parent = REPOSITORY_ROOT.parent.parent / '.env.betha'
+    if worktree_parent.exists():
+        return worktree_parent
+    return direct
+
+
+BETHA_ENV = _find_betha_env()
+CATALOG_PATH = REPOSITORY_ROOT / 'tests' / 'fixtures' / 'betha' / 'catalog.json'
 IMAGE_TAG = 'openapi-mcp-server:betha-smoke-test'
 DOCKER_CONTEXT = 'docker-dev'
 
@@ -54,7 +66,7 @@ def _docker_available():
 
 
 def _betha_env_present():
-    return BETHA_ENV.exists()
+    return BETHA_ENV.exists() or bool(os.environ.get('BETHA_API_KEY'))
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +95,8 @@ def _wait_for_tcp(host, port, timeout=60):
 
 def _wait_for_http(url, timeout=60):
     """Block until HTTP endpoint responds or timeout expires."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -100,14 +112,83 @@ def _wait_for_http(url, timeout=60):
 
 
 def _load_betha_credentials():
-    load_dotenv(BETHA_ENV)
+    if BETHA_ENV.exists():
+        load_dotenv(BETHA_ENV)
     return {
-        'api_key': os.environ.get('BETHA_API_KEY', ''),
+        'api_key': os.environ.get('BETHA_API_KEY') or os.environ.get('AUTH_TOKEN', ''),
         'api_url': os.environ.get('BETHA_API_URL', 'https://pessoal.betha.cloud/service-layer'),
         'spec_path': os.environ.get(
             'BETHA_SPEC_PATH', 'tests/fixtures/betha/pessoal-service-layer.json'
         ),
     }
+
+
+def _load_available_docker_specs():
+    """Return distinct available specs from the Betha fixture catalog."""
+    if not CATALOG_PATH.exists():
+        return []
+    with open(CATALOG_PATH, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    entries = data if isinstance(data, list) else data.get('entries', [])
+    seen = set()
+    specs = []
+    for entry in entries:
+        if entry.get('status') == 'available' and entry.get('fixture_path'):
+            fix_path = entry['fixture_path']
+            if fix_path not in seen:
+                seen.add(fix_path)
+                specs.append(
+                    {
+                        'product': entry['product'],
+                        'fixture_path': fix_path,
+                        'api_base_url': entry.get('api_base_url') or 'https://example.com',
+                    }
+                )
+    return specs
+
+
+def _docker_server_args(
+    docker_image: str,
+    host_port: int,
+    api_name: str,
+    api_base_url: str,
+    spec_container_path: str,
+    transport: str,
+    max_tools: int = 20,
+) -> list[str]:
+    """Return docker run arguments. Secrets are passed via ambient env, never in argv."""
+    return [
+        'docker',
+        '--context',
+        DOCKER_CONTEXT,
+        'run',
+        '-d',
+        '-p',
+        f'127.0.0.1:{host_port}:8000',
+        '-e',
+        f'API_NAME={api_name}',
+        '-e',
+        f'API_BASE_URL={api_base_url}',
+        '-e',
+        f'API_SPEC_PATH={spec_container_path}',
+        '-e',
+        'AUTH_TYPE=bearer',
+        '-e',
+        'AUTH_TOKEN',
+        '-e',
+        f'SERVER_TRANSPORT={transport}',
+        '-e',
+        'SERVER_HOST=0.0.0.0',
+        '-e',
+        'SERVER_PORT=8000',
+        '-e',
+        'ALLOW_REMOTE_BIND=true',
+        '-e',
+        'TZ=America/Sao_Paulo',
+        '-e',
+        f'MAX_TOOLS={max_tools}',
+        docker_image,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -211,238 +292,128 @@ async def test_docker_entrypoint_shows_help(docker_image):
     )
 
 
+def test_docker_server_args_excludes_auth_token():
+    """Verify that _docker_server_args does not contain --auth-token or raw credentials in argv."""
+    args = _docker_server_args(
+        docker_image='image:test',
+        host_port=8000,
+        api_name='Test',
+        api_base_url='https://example.com',
+        spec_container_path='/app/spec.json',
+        transport='http',
+    )
+    assert '--auth-token' not in args
+    assert not any(a.startswith('AUTH_TOKEN=') for a in args)
+    assert not any('token' in a.lower() and '=' in a and not a.startswith('API_') for a in args)
+    for i, a in enumerate(args):
+        if a == 'AUTH_TOKEN':
+            assert i > 0 and args[i - 1] == '-e'
+
+
 @pytest.mark.docker
 @pytest.mark.asyncio
-async def test_docker_betha_http_transport_exposes_pessoal_tools(docker_image):
-    """Container running Streamable-HTTP transport exposes Betha Pessoal MCP tools."""
+async def test_docker_image_excludes_env_files(docker_image):
+    """The built distroless image must not contain .env or .env.* files."""
+    result = subprocess.run(
+        [
+            'docker',
+            '--context',
+            DOCKER_CONTEXT,
+            'run',
+            '--rm',
+            '--entrypoint',
+            '/app/.venv/bin/python3',
+            docker_image,
+            '-c',
+            'import os, sys; found = [f for f in os.listdir("/app") if f.startswith(".env")]; sys.exit(1 if found else 0)',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f'Found .env files inside container image: {result.stderr or result.stdout}'
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.asyncio
+@pytest.mark.parametrize('transport', ['http', 'sse'])
+@pytest.mark.parametrize(
+    'spec_info',
+    _load_available_docker_specs(),
+    ids=lambda s: f'{s["product"]}-{Path(s["fixture_path"]).stem}',
+)
+async def test_docker_betha_transport_matrix(docker_image, spec_info, transport):
+    """Container running Streamable-HTTP or SSE transport exposes Betha MCP tools."""
     creds = _load_betha_credentials()
     if not creds['api_key']:
         pytest.skip('BETHA_API_KEY not set')
 
     host_port = _reserve_port()
-    spec_container_path = '/app/tests/fixtures/betha/pessoal-service-layer.json'
+    spec_container_path = f'/app/{spec_info["fixture_path"]}'
 
     container_id = None
+    env = os.environ.copy()
+    env['AUTH_TOKEN'] = creds['api_key']
+
+    args = _docker_server_args(
+        docker_image=docker_image,
+        host_port=host_port,
+        api_name=spec_info['product'],
+        api_base_url=spec_info['api_base_url'],
+        spec_container_path=spec_container_path,
+        transport=transport,
+        max_tools=20,
+    )
     try:
         result = subprocess.run(
-            [
-                'docker',
-                '--context',
-                DOCKER_CONTEXT,
-                'run',
-                '-d',
-                '-p',
-                f'127.0.0.1:{host_port}:8000',
-                '-e',
-                'API_NAME=Pessoal',
-                '-e',
-                f'API_BASE_URL={creds["api_url"]}',
-                '-e',
-                f'API_SPEC_PATH={spec_container_path}',
-                '-e',
-                'AUTH_TYPE=bearer',
-                '-e',
-                f'AUTH_TOKEN={creds["api_key"]}',
-                '-e',
-                'SERVER_TRANSPORT=http',
-                '-e',
-                'SERVER_HOST=0.0.0.0',
-                '-e',
-                'SERVER_PORT=8000',
-                '-e',
-                'ALLOW_REMOTE_BIND=true',
-                '-e',
-                'TZ=America/Sao_Paulo',
-                '-e',
-                'MAX_TOOLS=20',
-                docker_image,
-            ],
+            args,
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         if result.returncode != 0:
             pytest.fail(f'docker run failed: {result.stderr}')
 
         container_id = result.stdout.strip()
 
-        # Wait for HTTP server to respond inside the container
-        _wait_for_http(f'http://127.0.0.1:{host_port}/mcp', timeout=60)
-
-        # Connect via MCP SDK and assert Pessoal tools
-        async with httpx2.AsyncClient(timeout=15) as client:
-            async with streamable_http_client(
-                f'http://127.0.0.1:{host_port}/mcp', http_client=client
+        if transport == 'http':
+            _wait_for_http(f'http://127.0.0.1:{host_port}/mcp', timeout=60)
+            async with httpx2.AsyncClient(timeout=15) as client:
+                async with streamable_http_client(
+                    f'http://127.0.0.1:{host_port}/mcp',
+                    http_client=client,
+                    max_sse_event_size=None,
+                ) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
+                        await asyncio.wait_for(session.initialize(), timeout=15)
+                        tool_result = await asyncio.wait_for(session.list_tools(), timeout=10)
+                        tool_names = {tool.name for tool in tool_result.tools}
+                        assert len(tool_names) > 0, (
+                            f'Expected non-empty tools list for {spec_info["product"]}'
+                        )
+                        if 'pessoal' in spec_info['fixture_path']:
+                            assert any(
+                                'Estado' in name or 'estado' in name.lower() for name in tool_names
+                            ), f'Expected Pessoal tools, got: {list(tool_names)[:5]}'
+        else:
+            _wait_for_http(f'http://127.0.0.1:{host_port}/sse', timeout=60)
+            async with sse_client(
+                f'http://127.0.0.1:{host_port}/sse', timeout=30, sse_read_timeout=45
             ) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=10) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=15)
-                    tool_result = await asyncio.wait_for(session.list_tools(), timeout=10)
+                async with ClientSession(read, write, read_timeout_seconds=15) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=20)
+                    tool_result = await asyncio.wait_for(session.list_tools(), timeout=15)
                     tool_names = {tool.name for tool in tool_result.tools}
-                    assert any(
-                        'Estado' in name or 'estado' in name.lower() for name in tool_names
-                    ), f'Expected Pessoal tools, got sample: {list(tool_names)[:5]}'
-    finally:
-        if container_id:
-            subprocess.run(
-                ['docker', '--context', DOCKER_CONTEXT, 'stop', container_id],
-                capture_output=True,
-                timeout=15,
-            )
-            subprocess.run(
-                ['docker', '--context', DOCKER_CONTEXT, 'rm', container_id],
-                capture_output=True,
-                timeout=10,
-            )
-
-
-@pytest.mark.docker
-@pytest.mark.asyncio
-async def test_docker_betha_sse_transport_exposes_pessoal_tools(docker_image):
-    """Container running SSE transport exposes Betha Pessoal MCP tools."""
-    creds = _load_betha_credentials()
-    if not creds['api_key']:
-        pytest.skip('BETHA_API_KEY not set')
-
-    host_port = _reserve_port()
-    spec_container_path = '/app/tests/fixtures/betha/pessoal-service-layer.json'
-
-    container_id = None
-    try:
-        result = subprocess.run(
-            [
-                'docker',
-                '--context',
-                DOCKER_CONTEXT,
-                'run',
-                '-d',
-                '-p',
-                f'127.0.0.1:{host_port}:8000',
-                '-e',
-                'API_NAME=Pessoal',
-                '-e',
-                f'API_BASE_URL={creds["api_url"]}',
-                '-e',
-                f'API_SPEC_PATH={spec_container_path}',
-                '-e',
-                'AUTH_TYPE=bearer',
-                '-e',
-                f'AUTH_TOKEN={creds["api_key"]}',
-                '-e',
-                'SERVER_TRANSPORT=sse',
-                '-e',
-                'SERVER_HOST=0.0.0.0',
-                '-e',
-                'SERVER_PORT=8000',
-                '-e',
-                'ALLOW_REMOTE_BIND=true',
-                '-e',
-                'TZ=America/Sao_Paulo',
-                '-e',
-                'MAX_TOOLS=20',
-                docker_image,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            pytest.fail(f'docker run failed: {result.stderr}')
-
-        container_id = result.stdout.strip()
-
-        _wait_for_http(f'http://127.0.0.1:{host_port}/sse', timeout=60)
-
-        async with sse_client(
-            f'http://127.0.0.1:{host_port}/sse', timeout=30, sse_read_timeout=45
-        ) as (read, write):
-            async with ClientSession(read, write, read_timeout_seconds=15) as session:
-                await asyncio.wait_for(session.initialize(), timeout=20)
-                tool_result = await asyncio.wait_for(session.list_tools(), timeout=15)
-                tool_names = {tool.name for tool in tool_result.tools}
-                assert len(tool_names) > 0, 'Expected non-empty tools list'
-                assert any(
-                    'Estado' in name or 'estado' in name.lower() for name in tool_names
-                ), f'Expected Pessoal tools, got: {list(tool_names)[:5]}'
-    finally:
-        if container_id:
-            subprocess.run(
-                ['docker', '--context', DOCKER_CONTEXT, 'stop', container_id],
-                capture_output=True,
-                timeout=15,
-            )
-            subprocess.run(
-                ['docker', '--context', DOCKER_CONTEXT, 'rm', container_id],
-                capture_output=True,
-                timeout=10,
-            )
-
-
-@pytest.mark.docker
-@pytest.mark.asyncio
-async def test_docker_betha_http_transport_exposes_contabil_tools(docker_image):
-    """Container running Streamable-HTTP transport exposes Betha Contabil MCP tools."""
-    creds = _load_betha_credentials()
-    if not creds['api_key']:
-        pytest.skip('BETHA_API_KEY not set')
-
-    host_port = _reserve_port()
-    spec_container_path = '/app/tests/fixtures/betha/contabil-service-layer.json'
-
-    container_id = None
-    try:
-        result = subprocess.run(
-            [
-                'docker',
-                '--context',
-                DOCKER_CONTEXT,
-                'run',
-                '-d',
-                '-p',
-                f'127.0.0.1:{host_port}:8000',
-                '-e',
-                'API_NAME=Contabil',
-                '-e',
-                'API_BASE_URL=https://contabil.betha.cloud/contabil/service-layer',
-                '-e',
-                f'API_SPEC_PATH={spec_container_path}',
-                '-e',
-                'AUTH_TYPE=bearer',
-                '-e',
-                f'AUTH_TOKEN={creds["api_key"]}',
-                '-e',
-                'SERVER_TRANSPORT=http',
-                '-e',
-                'SERVER_HOST=0.0.0.0',
-                '-e',
-                'SERVER_PORT=8000',
-                '-e',
-                'ALLOW_REMOTE_BIND=true',
-                '-e',
-                'TZ=America/Sao_Paulo',
-                '-e',
-                'MAX_TOOLS=20',
-                docker_image,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            pytest.fail(f'docker run failed: {result.stderr}')
-
-        container_id = result.stdout.strip()
-
-        _wait_for_http(f'http://127.0.0.1:{host_port}/mcp', timeout=60)
-
-        async with httpx2.AsyncClient(timeout=15) as client:
-            async with streamable_http_client(
-                f'http://127.0.0.1:{host_port}/mcp', http_client=client
-            ) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=10) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=15)
-                    tool_result = await asyncio.wait_for(session.list_tools(), timeout=10)
-                    tool_names = {tool.name for tool in tool_result.tools}
-                    assert len(tool_names) > 0, 'Expected non-empty tools list for Contabil'
+                    assert len(tool_names) > 0, (
+                        f'Expected non-empty tools list for {spec_info["product"]}'
+                    )
+                    if 'pessoal' in spec_info['fixture_path']:
+                        assert any(
+                            'Estado' in name or 'estado' in name.lower() for name in tool_names
+                        ), f'Expected Pessoal tools, got: {list(tool_names)[:5]}'
     finally:
         if container_id:
             subprocess.run(

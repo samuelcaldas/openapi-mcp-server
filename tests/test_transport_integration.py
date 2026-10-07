@@ -28,6 +28,14 @@ SERVER_ENVIRONMENT_OVERRIDES = (
     'ALLOW_REMOTE_BIND',
     'ALLOWED_ORIGINS',
 )
+AUTH_ENVIRONMENT_OVERRIDES = (
+    'AUTH_TOKEN',
+    'AUTH_PASSWORD',
+    'AUTH_USERNAME',
+    'AUTH_API_KEY',
+    'AUTH_TYPE',
+    'BETHA_API_KEY',
+)
 INITIALIZE_REQUEST = {
     'jsonrpc': '2.0',
     'id': 1,
@@ -168,11 +176,17 @@ async def _stop_process(process):
     return await process.communicate()
 
 
-def _server_environment():
-    """Copy the environment without server settings that alter CLI defaults."""
+def _server_environment(auth_token=None, extra_env=None):
+    """Copy the environment without server settings that alter CLI defaults or ambient auth."""
     environment = os.environ.copy()
     for key in SERVER_ENVIRONMENT_OVERRIDES:
         environment.pop(key, None)
+    for key in AUTH_ENVIRONMENT_OVERRIDES:
+        environment.pop(key, None)
+    if auth_token:
+        environment['AUTH_TOKEN'] = auth_token
+    if extra_env:
+        environment.update(extra_env)
     return environment
 
 
