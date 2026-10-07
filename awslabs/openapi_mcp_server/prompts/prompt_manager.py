@@ -37,6 +37,7 @@ class MCPPromptManager:
         openapi_spec: Dict[str, Any],
         route_classifications: Mapping[tuple[str, str], str] | None = None,
         resource_uris: Mapping[tuple[str, str], str] | None = None,
+        disabled_methods: set[str] | None = None,
     ) -> Dict[str, bool]:
         """Generate MCP-compliant prompts from an OpenAPI specification.
 
@@ -46,6 +47,7 @@ class MCPPromptManager:
             openapi_spec: OpenAPI specification
             route_classifications: MCP component types captured by the provider callback
             resource_uris: Registered resource URIs captured by the provider callback
+            disabled_methods: HTTP methods excluded from MCP tool exposure
 
         Returns:
             Status of prompt generation
@@ -67,6 +69,8 @@ class MCPPromptManager:
                 continue
             for method, operation in path_item.items():
                 if method not in ['get', 'post', 'put', 'patch', 'delete']:
+                    continue
+                if disabled_methods and method.upper() in disabled_methods:
                     continue
                 if not isinstance(operation, dict):
                     continue

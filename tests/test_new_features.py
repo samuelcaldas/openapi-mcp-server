@@ -745,3 +745,168 @@ async def test_additional_specs_non_list_json():
     tools = await server.list_tools()
     names = {t.name for t in tools}
     assert 'listPets' in names
+
+
+# --- HTTP Method Filtering & Tool Limiting Tests ---
+
+
+@pytest.mark.asyncio
+async def test_disable_http_methods_excludes_mutation_tools():
+    """DISABLE_HTTP_METHODS suppresses specified methods from tools and prompts."""
+    server = await _create_server(_base_config(disable_http_methods='POST,PUT,DELETE,PATCH'))
+    tools = await server.list_tools()
+    tool_names = {t.name for t in tools}
+    assert 'createPet' not in tool_names
+    assert 'listPets' in tool_names
+    assert 'listUsers' in tool_names
+
+    prompts = {prompt.name for prompt in await server.list_prompts()}
+    assert 'createPet' not in prompts
+    assert 'listPets' in prompts
+
+
+@pytest.mark.asyncio
+async def test_disable_http_methods_ignores_get_with_warning():
+    """GET in disable_http_methods is safely ignored with a warning."""
+    with patch('awslabs.openapi_mcp_server.server.logger') as mock_logger:
+        server = await _create_server(_base_config(disable_http_methods='GET,post'))
+        tools = await server.list_tools()
+        tool_names = {t.name for t in tools}
+        assert 'createPet' not in tool_names
+        assert 'listPets' in tool_names
+        warnings = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("Ignoring 'GET'" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_disable_http_methods_ignores_unrecognized_method():
+    """Unrecognized methods in disable_http_methods are warned and ignored."""
+    with patch('awslabs.openapi_mcp_server.server.logger') as mock_logger:
+        server = await _create_server(_base_config(disable_http_methods='INVALID_METHOD'))
+        tools = await server.list_tools()
+        tool_names = {t.name for t in tools}
+        assert 'createPet' in tool_names
+        warnings = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any('unrecognized HTTP method' in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_disable_http_methods_applies_to_additional_specs():
+    """Method exclusions also apply to additional specs in multi-spec setups."""
+    extra = json.dumps(
+        [
+            {
+                'name': 'payments',
+                'spec_url': 'https://payments.example.com/spec',
+                'base_url': 'https://payments.example.com',
+            }
+        ]
+    )
+    server = await _create_server(
+        _base_config(additional_specs=extra, disable_http_methods='POST'),
+        extra_spec=EXTRA_SPEC,
+    )
+    tools = await server.list_tools()
+    tool_names = {t.name for t in tools}
+    assert 'createPayment' not in tool_names
+    assert 'createPet' not in tool_names
+    assert 'listPets' in tool_names
+
+
+@pytest.mark.asyncio
+async def test_max_tools_caps_tool_count_and_prioritizes_get():
+    """MAX_TOOLS caps exposed tools, retaining GET tools before non-GET tools."""
+    server = await _create_server(_base_config(max_tools=2))
+    tools = await server.list_tools()
+    tool_names = {t.name for t in tools}
+    assert len(tools) == 2
+    assert 'listPets' in tool_names
+    assert 'listUsers' in tool_names
+    assert 'createPet' not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_max_tools_smaller_than_get_count():
+    """MAX_TOOLS smaller than GET tools count retains top alphabetically sorted GET tools."""
+    server = await _create_server(_base_config(max_tools=1))
+    tools = await server.list_tools()
+    assert len(tools) == 1
+    assert tools[0].name == 'listPets'
+
+
+@pytest.mark.asyncio
+async def test_max_tools_no_op_when_zero_or_negative():
+    """MAX_TOOLS=0 or negative does not cap tools."""
+    server_zero = await _create_server(_base_config(max_tools=0))
+    tools_zero = await server_zero.list_tools()
+    assert len(tools_zero) == 3
+
+    server_neg = await _create_server(_base_config(max_tools=-1))
+    tools_neg = await server_neg.list_tools()
+    assert len(tools_neg) == 3
+
+
+@pytest.mark.asyncio
+async def test_max_tools_no_op_when_greater_than_total():
+    """MAX_TOOLS exceeding total tools has no effect."""
+    server = await _create_server(_base_config(max_tools=50))
+    tools = await server.list_tools()
+    assert len(tools) == 3
+
+
+def test_config_disable_http_methods_from_env(monkeypatch):
+    """DISABLE_HTTP_METHODS is read from environment variables."""
+    monkeypatch.setenv('DISABLE_HTTP_METHODS', 'POST,PUT,DELETE')
+    config = load_config()
+    assert config.disable_http_methods == 'POST,PUT,DELETE'
+
+
+def test_config_max_tools_from_env(monkeypatch):
+    """MAX_TOOLS is read from environment variables."""
+    monkeypatch.setenv('MAX_TOOLS', '25')
+    config = load_config()
+    assert config.max_tools == 25
+
+
+def test_config_disable_http_methods_and_max_tools_from_args():
+    """CLI args set disable_http_methods and max_tools."""
+    from unittest.mock import MagicMock as M
+
+    args = M()
+    args.disable_http_methods = 'POST,PATCH'
+    args.max_tools = 15
+    for attr in [
+        'api_name',
+        'api_url',
+        'spec_url',
+        'spec_path',
+        'port',
+        'debug',
+        'auth_type',
+        'auth_username',
+        'auth_password',
+        'auth_token',
+        'auth_api_key',
+        'auth_api_key_name',
+        'auth_api_key_in',
+        'auth_cognito_client_id',
+        'auth_cognito_username',
+        'auth_cognito_password',
+        'auth_cognito_client_secret',
+        'auth_cognito_domain',
+        'auth_cognito_scopes',
+        'auth_cognito_user_pool_id',
+        'auth_cognito_region',
+        'include_tags',
+        'exclude_tags',
+        'no_validate_output',
+        'additional_specs',
+        'allow_insecure_http',
+        'allow_private_networks',
+        'allowed_spec_dirs',
+    ]:
+        setattr(args, attr, None)
+
+    config = load_config(args)
+    assert config.disable_http_methods == 'POST,PATCH'
+    assert config.max_tools == 15

@@ -71,6 +71,16 @@ class Config:
     include_tags: str = ''  # comma-separated list of OpenAPI tags to include
     exclude_tags: str = ''  # comma-separated list of OpenAPI tags to exclude
 
+    # HTTP method filtering (feature flag; no-op when empty)
+    # Comma-separated HTTP methods to suppress from MCP tools, e.g. POST,PUT,DELETE,PATCH
+    # for a read-only MCP connection.  GET is always ignored (GET ops become resources).
+    disable_http_methods: str = ''
+
+    # Operation count limiting (feature flag; 0 = unlimited)
+    # Cap on the number of MCP tools exposed.  GET-type tools survive the cap first.
+    # Useful for large specs that exceed SSE frame limits or bloat LLM context.
+    max_tools: int = 0
+
     # Output validation
     validate_output: bool = True  # validate API responses against OpenAPI response schemas
 
@@ -147,6 +157,10 @@ def load_config(args: Any = None) -> Config:
         # Tag filtering
         'INCLUDE_TAGS': (lambda v: setattr(config, 'include_tags', v)),
         'EXCLUDE_TAGS': (lambda v: setattr(config, 'exclude_tags', v)),
+        # HTTP method filtering
+        'DISABLE_HTTP_METHODS': (lambda v: setattr(config, 'disable_http_methods', v)),
+        # Operation count limiting
+        'MAX_TOOLS': (lambda v: setattr(config, 'max_tools', int(v))),
         # Output validation
         'VALIDATE_OUTPUT': (lambda v: setattr(config, 'validate_output', v.lower() != 'false')),
         # Additional specs
@@ -287,6 +301,14 @@ def load_config(args: Any = None) -> Config:
 
         if hasattr(args, 'exclude_tags') and args.exclude_tags:
             config.exclude_tags = args.exclude_tags
+
+        # HTTP method filtering arguments
+        if hasattr(args, 'disable_http_methods') and args.disable_http_methods:
+            config.disable_http_methods = args.disable_http_methods
+
+        # Operation count limiting arguments
+        if hasattr(args, 'max_tools') and args.max_tools is not None:
+            config.max_tools = args.max_tools
 
         # Output validation
         if hasattr(args, 'no_validate_output') and args.no_validate_output:

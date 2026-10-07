@@ -44,7 +44,7 @@ from fastmcp.server.providers.openapi import (
     RouteMap,
 )
 from fastmcp.utilities.openapi import format_description_with_responses
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 
 _HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'options', 'head', 'trace'}
@@ -69,9 +69,39 @@ def _get_parameters(spec: Dict[str, Any], *parameter_sets: Any) -> list:
     return parameters
 
 
-def _build_route_maps(spec: Dict[str, Any]) -> list:
-    """Map GET routes to resources, templates, or tools."""
-    mappings = []
+def _build_disabled_method_mappings(disabled_methods: set[str] | None) -> list[RouteMap]:
+    """Create EXCLUDE route mappings for configured HTTP methods."""
+    if not disabled_methods:
+        return []
+
+    mappings: list[RouteMap] = []
+    for method in sorted(disabled_methods):
+        normalized_method = method.upper()
+        if normalized_method == 'GET':
+            logger.warning(
+                "Ignoring 'GET' in disabled HTTP methods (GET operations become resources/templates)"
+            )
+            continue
+        if normalized_method.lower() not in _HTTP_METHODS:
+            logger.warning(
+                f"Ignoring unrecognized HTTP method in disabled HTTP methods: '{method}'"
+            )
+            continue
+        mappings.append(
+            RouteMap(
+                methods=[normalized_method],
+                pattern=r'.*',
+                mcp_type=MCPType.EXCLUDE,
+            )
+        )
+    return mappings
+
+
+def _build_route_maps(
+    spec: Dict[str, Any], disabled_methods: set[str] | None = None
+) -> list:
+    """Map GET routes to resources, templates, or tools, and exclude disabled methods."""
+    mappings = _build_disabled_method_mappings(disabled_methods)
     for path, path_item in spec.get('paths', {}).items():
         if not isinstance(path_item, dict):
             continue
@@ -116,12 +146,13 @@ def _enrich_component(route: Any, component: Any) -> None:
 def _create_component_callback(
     route_classifications: Dict[tuple[str, str], str] | None = None,
     resource_uris: Dict[tuple[str, str], str] | None = None,
+    tool_methods: Dict[str, str] | None = None,
 ):
     """Enrich generated components and optionally record their mapped route types."""
 
     def classify_component(route: Any, component: Any) -> None:
         _enrich_component(route, component)
-        if route_classifications is None and resource_uris is None:
+        if route_classifications is None and resource_uris is None and tool_methods is None:
             return
 
         route_key = (route.path, route.method.upper())
@@ -132,8 +163,51 @@ def _create_component_callback(
             resource_uris[route_key] = str(
                 getattr(component, 'uri_template', getattr(component, 'uri', ''))
             )
+        if tool_methods is not None and component_type == 'tool':
+            tool_name = getattr(component, 'name', None)
+            if tool_name:
+                tool_methods[tool_name] = route.method.upper()
 
     return classify_component
+
+
+async def _apply_tool_limit(
+    server: FastMCP, max_tools: int, tool_methods: Mapping[str, str]
+) -> None:
+    """Cap exposed tools to max_tools, prioritizing GET tools first."""
+    if max_tools <= 0:
+        return
+
+    tools = await server.list_tools()
+    if len(tools) <= max_tools:
+        return
+
+    get_tools = []
+    non_get_tools = []
+    for tool in tools:
+        is_get = (
+            tool_methods.get(tool.name) == 'GET'
+            or tool.name.startswith('GET_')
+            or 'GET ' in (getattr(tool, 'description', '') or '')
+        )
+        if is_get:
+            get_tools.append(tool)
+            continue
+        non_get_tools.append(tool)
+
+    get_tools.sort(key=lambda t: t.name)
+    non_get_tools.sort(key=lambda t: t.name)
+
+    ordered_tools = get_tools + non_get_tools
+    excess_tools = ordered_tools[max_tools:]
+    excess_names = {t.name for t in excess_tools}
+
+    logger.warning(
+        f'MAX_TOOLS={max_tools}: capping {len(tools)} tools to {max_tools} '
+        f'({len(excess_names)} tools disabled). Consider using INCLUDE_TAGS or '
+        f'DISABLE_HTTP_METHODS for targeted selection.'
+    )
+    server.disable(names=excess_names)
 
 
 def _get_component_type(component: Any) -> str | None:
@@ -286,7 +360,16 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         )
         logger.info(f'Created HTTP client for API base URL: {config.api_base_url}')
 
-        custom_mappings = _build_route_maps(openapi_spec)
+        # Parse disabled HTTP methods
+        disabled_methods = (
+            {m.strip().upper() for m in config.disable_http_methods.split(',') if m.strip()}
+            if config.disable_http_methods
+            else None
+        )
+        if disabled_methods:
+            logger.info(f'Excluding HTTP methods from MCP tools: {sorted(disabled_methods)}')
+
+        custom_mappings = _build_route_maps(openapi_spec, disabled_methods=disabled_methods)
 
         # Create the FastMCP server with custom route mappings
         logger.info('Creating FastMCP server with OpenAPI specification')
@@ -312,10 +395,11 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         if exclude_tags:
             logger.info(f'Excluding operations with tags: {exclude_tags}')
 
+        tool_methods: Dict[str, str] = {}
         primary_route_classifications: Dict[tuple[str, str], str] = {}
         primary_resource_uris: Dict[tuple[str, str], str] = {}
         primary_component_callback = _create_component_callback(
-            primary_route_classifications, primary_resource_uris
+            primary_route_classifications, primary_resource_uris, tool_methods
         )
 
         # POC migration: build the primary server via the native high-level
@@ -481,8 +565,12 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
                         OpenAPIProvider(
                             openapi_spec=extra_spec,
                             client=extra_client,
-                            route_maps=_build_route_maps(extra_spec),
-                            mcp_component_fn=_create_component_callback(),
+                            route_maps=_build_route_maps(
+                                extra_spec, disabled_methods=disabled_methods
+                            ),
+                            mcp_component_fn=_create_component_callback(
+                                tool_methods=tool_methods
+                            ),
                             validate_output=config.validate_output,
                         )
                     )
@@ -502,6 +590,9 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
         if exclude_tags:
             server.disable(tags=exclude_tags)
 
+        # Apply tool count limit if specified
+        await _apply_tool_limit(server, config.max_tools, tool_methods)
+
         logger.info(f'Successfully configured API: {config.api_name}')
 
         # Generate MCP-compliant prompts
@@ -517,6 +608,7 @@ async def create_mcp_server_async(config: Config) -> FastMCP:
                 openapi_spec,
                 route_classifications=primary_route_classifications,
                 resource_uris=primary_resource_uris,
+                disabled_methods=disabled_methods,
             )
 
             # Register resource handler
@@ -764,6 +856,20 @@ def main():
     parser.add_argument(
         '--exclude-tags',
         help='Comma-separated list of OpenAPI tags to exclude (hide matching operations)',
+    )
+
+    # HTTP method filtering
+    parser.add_argument(
+        '--disable-http-methods',
+        help='Comma-separated HTTP methods to suppress from MCP tools (e.g. POST,PUT,DELETE,PATCH)',
+    )
+
+    # Operation count limiting
+    parser.add_argument(
+        '--max-tools',
+        type=int,
+        default=None,
+        help='Maximum number of MCP tools to expose (default: unlimited)',
     )
 
     # Output validation
