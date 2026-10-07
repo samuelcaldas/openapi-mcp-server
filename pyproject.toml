@@ -85,6 +85,10 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 asyncio_mode = "auto"
+markers = [
+    "live: marks tests that call real external APIs (deselect with -m 'not live')",
+    "docker: marks tests that require the docker CLI (deselect with -m 'not docker')",
+]
 
 [tool.coverage.run]
 source = ["awslabs"]
